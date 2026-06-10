@@ -1,0 +1,96 @@
+{
+  "name": "refund_actor",
+  "description": "ACTOR for the refund/support loop. Looks up the account+order (worker), an LLM decides the action (issue_refund | escalate | request_info), and on issue_refund a worker writes the refund to the ledger. Uses verification feedback to correct a wrong decision.",
+  "version": 1,
+  "schemaVersion": 2,
+  "ownerEmail": "viren@orkes.io",
+  "timeoutPolicy": "TIME_OUT_WF",
+  "timeoutSeconds": 600,
+  "inputParameters": ["objective", "acceptance_criteria", "plan", "context", "feedback", "iteration", "history", "llm_provider", "llm_model", "extension_params"],
+  "tasks": [
+    {
+      "name": "account_lookup",
+      "taskReferenceName": "lookup",
+      "type": "SIMPLE",
+      "inputParameters": {
+        "customer_id": "${workflow.input.extension_params.customer_id}",
+        "order_id": "${workflow.input.extension_params.order_id}"
+      }
+    },
+    {
+      "name": "order_json",
+      "taskReferenceName": "order_json",
+      "type": "JSON_JQ_TRANSFORM",
+      "inputParameters": {
+        "lk": "${lookup.output}",
+        "queryExpression": ".lk | tojson"
+      }
+    },
+    {
+      "name": "decide_action",
+      "taskReferenceName": "decide_action",
+      "type": "LLM_CHAT_COMPLETE",
+      "inputParameters": {
+        "llmProvider": "${workflow.input.llm_provider}",
+        "model": "${workflow.input.llm_model}",
+        "temperature": 0.0,
+        "maxTokens": 700,
+        "messages": [
+          {"role": "system", "message": "You are a customer-support refund agent. Choose the single best action and follow the refund policy EXACTLY. Respond with valid JSON only, no markdown fences: {\"action\": \"issue_refund\" or \"escalate\" or \"request_info\", \"amount\": number (0 if not refunding; never exceed the order total), \"reason\": \"short internal reason\", \"message\": \"customer-facing reply\"}. If a verification step's feedback is provided below, your previous decision FAILED verification — correct it precisely. Start with { and end with }."},
+          {"role": "user", "message": "CASE:\n${workflow.input.objective}\n\nREFUND POLICY:\n${workflow.input.acceptance_criteria}\n\nACCOUNT, ORDER & POLICY FACTS (JSON):\n${order_json.output.result}\n\nVERIFICATION FEEDBACK ON YOUR PREVIOUS DECISION (empty = first attempt):\n${workflow.input.feedback}"}
+        ]
+      }
+    },
+    {
+      "name": "parse_action",
+      "taskReferenceName": "parse_action",
+      "type": "INLINE",
+      "inputParameters": {
+        "evaluatorType": "graaljs",
+        "actionText": "${decide_action.output.result}",
+        "expression": "(function(){ var o={action:'escalate',amount:0,reason:'',message:''}; function take(p){ if(p.action)o.action=(''+p.action).toLowerCase().trim(); if(p.amount!=null){var a=Number(p.amount); if(!isNaN(a))o.amount=a;} if(p.reason!=null)o.reason=''+p.reason; if(p.message!=null)o.message=''+p.message; } var v=$.actionText; if(v!=null && typeof v==='object'){ take(v); return o; } var t=''+(v||''); t=t.replace(/```json/gi,'').replace(/```/g,''); var s=t.indexOf('{'); var e=t.lastIndexOf('}'); var parsed=null; if(s>=0&&e>s){ try{ parsed=JSON.parse(t.substring(s,e+1)); }catch(err){ parsed=null; } } if(parsed){ take(parsed); } else { var low=t.toLowerCase(); if(low.indexOf('issue_refund')>=0)o.action='issue_refund'; else if(low.indexOf('request_info')>=0)o.action='request_info'; else if(low.indexOf('escalate')>=0)o.action='escalate'; var i=low.indexOf('amount'); if(i>=0){ var c=i+6; while(c<t.length){ var ch=t.charAt(c); if(ch===':'||ch==='='){c++;break;} c++; } var r=t.substring(c); var m=''; for(var k=0;k<r.length;k++){ var ch2=r.charAt(k); if((ch2>='0'&&ch2<='9')||ch2==='.'){m+=ch2;} else if(m.length>0){break;} else if(ch2===' '){continue;} else {break;} } if(m.length)o.amount=Number(m); } } return o; })();"
+      }
+    },
+    {
+      "name": "route_action",
+      "taskReferenceName": "route_action",
+      "type": "SWITCH",
+      "evaluatorType": "value-param",
+      "expression": "action",
+      "inputParameters": {"action": "${parse_action.output.result.action}"},
+      "decisionCases": {
+        "issue_refund": [
+          {
+            "name": "issue_refund",
+            "taskReferenceName": "do_refund",
+            "type": "SIMPLE",
+            "inputParameters": {
+              "order_id": "${workflow.input.extension_params.order_id}",
+              "amount": "${parse_action.output.result.amount}",
+              "reason": "${parse_action.output.result.reason}"
+            }
+          }
+        ]
+      },
+      "defaultCase": []
+    },
+    {
+      "name": "build_result",
+      "taskReferenceName": "build_result",
+      "type": "INLINE",
+      "inputParameters": {
+        "evaluatorType": "graaljs",
+        "action": "${parse_action.output.result.action}",
+        "amount": "${parse_action.output.result.amount}",
+        "message": "${parse_action.output.result.message}",
+        "refundId": "${do_refund.output.refund_id}",
+        "expression": "(function(){ var rid=$.refundId; if(typeof rid!=='string' || rid.slice(0,3)!=='RF-') rid=''; var amt=Number($.amount); if(isNaN(amt))amt=0; return { action:(''+($.action||'escalate')), amount:amt, refund_id:rid, message:(''+($.message||'')) }; })();"
+      }
+    }
+  ],
+  "outputParameters": {
+    "result": "${build_result.output.result}",
+    "summary": "${parse_action.output.result.message}",
+    "tokens": "${decide_action.output.tokenUsed}"
+  }
+}

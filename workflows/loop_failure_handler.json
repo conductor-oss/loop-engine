@@ -1,0 +1,32 @@
+{
+  "name": "loop_failure_handler",
+  "description": "failureWorkflow for loop_engine: runs automatically if the engine itself fails (timeout, unrecoverable task error). Records the failed run's id, reason, and failed task for triage. Extension point: append HTTP / event / notification tasks here to page an operator or open a ticket.",
+  "version": 1,
+  "schemaVersion": 2,
+  "ownerEmail": "viren@orkes.io",
+  "timeoutPolicy": "TIME_OUT_WF",
+  "timeoutSeconds": 300,
+  "inputParameters": ["workflowId", "reason", "failureStatus", "failureTaskId"],
+  "tasks": [
+    {
+      "name": "record_failure",
+      "taskReferenceName": "record_failure",
+      "type": "INLINE",
+      "inputParameters": {
+        "evaluatorType": "graaljs",
+        "wfId": "${workflow.input.workflowId}",
+        "reason": "${workflow.input.reason}",
+        "failureStatus": "${workflow.input.failureStatus}",
+        "failureTaskId": "${workflow.input.failureTaskId}",
+        "expression": "(function(){ return { failed_workflow_id: ''+($.wfId||''), reason: ''+($.reason||''), failure_status: ''+($.failureStatus||''), failed_task_id: ''+($.failureTaskId||''), note: 'loop_engine run failed outside its own decision policy; inspect the failed workflow execution for the decision_log up to the failure.' }; })();"
+      }
+    }
+  ],
+  "outputParameters": {
+    "failed_workflow_id": "${record_failure.output.result.failed_workflow_id}",
+    "reason": "${record_failure.output.result.reason}",
+    "failure_status": "${record_failure.output.result.failure_status}",
+    "failed_task_id": "${record_failure.output.result.failed_task_id}",
+    "note": "${record_failure.output.result.note}"
+  }
+}

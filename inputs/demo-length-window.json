@@ -1,0 +1,23 @@
+{
+  "objective": "Write a 2-sentence elevator pitch for Conductor, the durable execution platform that runs AI agents in production.",
+  "acceptance_criteria": "MUST be between 150 and 170 characters total (inclusive). MUST contain the words 'durable', 'runtime', and 'production'. MUST be exactly two sentences. MUST NOT use 'revolutionary' or 'synergy'.",
+  "context": "Conductor is a framework-agnostic durable runtime for AI agents. Audience: platform and AI engineers shipping agents to production. Competitors help you AUTHOR agents; nobody owns the RUNTIME where they actually run reliably.",
+  "planner_workflow": "loop_planner",
+  "actor_workflow": "loop_actor",
+  "delegate_actor_workflow": "loop_actor",
+  "evaluator_workflow": "loop_demo_text_evaluator",
+  "max_iterations": 8,
+  "max_retries": 5,
+  "max_replans": 1,
+  "token_budget": 400000,
+  "enable_human": false,
+  "escalate_on_limit": false,
+  "llm_provider": "anthropic",
+  "llm_model": "claude-opus-4-7",
+  "extension_params": {
+    "max_chars": 170,
+    "min_chars": 150,
+    "required_keywords": "durable,runtime,production",
+    "banned_words": "revolutionary,synergy"
+  }
+}

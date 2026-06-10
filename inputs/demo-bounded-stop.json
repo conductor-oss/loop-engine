@@ -1,0 +1,23 @@
+{
+  "objective": "Write a single ultra-short tagline for Conductor.",
+  "acceptance_criteria": "MUST be <= 50 characters total AND MUST contain all five words: 'durable', 'runtime', 'production', 'recovery', 'checkpoint'. (This is deliberately near-impossible — it exists to demonstrate bounded termination.)",
+  "context": "Conductor is a durable runtime for AI agents in production.",
+  "planner_workflow": "loop_planner",
+  "actor_workflow": "loop_actor",
+  "delegate_actor_workflow": "loop_actor",
+  "evaluator_workflow": "loop_demo_text_evaluator",
+  "max_iterations": 5,
+  "max_retries": 3,
+  "max_replans": 1,
+  "token_budget": 400000,
+  "enable_human": false,
+  "escalate_on_limit": false,
+  "llm_provider": "anthropic",
+  "llm_model": "claude-opus-4-7",
+  "extension_params": {
+    "max_chars": 30,
+    "min_chars": 0,
+    "required_keywords": "durable,runtime,production,recovery,checkpoint",
+    "banned_words": "revolutionary,synergy"
+  }
+}

@@ -1,0 +1,9 @@
+{
+  "objective": "Write a haiku about reliability.",
+  "acceptance_criteria": "A valid haiku (5-7-5).",
+  "actor_workflow": "this_workflow_does_not_exist",
+  "llm_provider": "anthropic",
+  "llm_model": "claude-opus-4-7",
+  "max_retries": 3,
+  "max_iterations": 6
+}

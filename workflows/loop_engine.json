@@ -1,0 +1,454 @@
+{
+  "name": "loop_engine",
+  "description": "Loop-engineering control plane for AI agents. Wraps swappable PLANNER / ACTOR / EVALUATOR extension points (each a sub-workflow named via input) in a durable outer loop: resolve config (effort presets, validation) -> plan -> [act -> independent evaluate -> guard -> deterministic decision policy + guardrails -> route(accept|retry|replan|delegate|escalate|stop) -> persist bounded state] -> repeat until the objective is met or a termination condition fires. Survives actor/evaluator failures (bounded infra retries) and terminates cleanly on every path.",
+  "version": 1,
+  "schemaVersion": 2,
+  "ownerEmail": "viren@orkes.io",
+  "timeoutPolicy": "TIME_OUT_WF",
+  "timeoutSeconds": 86400,
+  "failureWorkflow": "loop_failure_handler",
+  "inputParameters": [
+    "objective",
+    "acceptance_criteria",
+    "context",
+    "effort",
+    "planner_workflow",
+    "actor_workflow",
+    "delegate_actor_workflow",
+    "evaluator_workflow",
+    "max_iterations",
+    "max_retries",
+    "max_replans",
+    "token_budget",
+    "enable_human",
+    "escalate_on_limit",
+    "llm_provider",
+    "llm_model",
+    "evaluator_llm_model",
+    "extension_params"
+  ],
+  "variables": {
+    "status": "running",
+    "feedback": "",
+    "plan": "",
+    "history": [],
+    "best_result": null,
+    "best_score": 0,
+    "spent_tokens": 0,
+    "fail_streak": 0,
+    "infra_streak": 0,
+    "replans_used": 0,
+    "active_actor": "loop_actor",
+    "last_decision": "",
+    "escalation_reason": ""
+  },
+  "tasks": [
+    {
+      "name": "resolve_config",
+      "taskReferenceName": "resolve_config",
+      "type": "INLINE",
+      "inputParameters": {
+        "evaluatorType": "graaljs",
+        "effort": "${workflow.input.effort}",
+        "objective": "${workflow.input.objective}",
+        "acceptance_criteria": "${workflow.input.acceptance_criteria}",
+        "llm_provider": "${workflow.input.llm_provider}",
+        "llm_model": "${workflow.input.llm_model}",
+        "evaluator_llm_model": "${workflow.input.evaluator_llm_model}",
+        "planner_workflow": "${workflow.input.planner_workflow}",
+        "actor_workflow": "${workflow.input.actor_workflow}",
+        "delegate_actor_workflow": "${workflow.input.delegate_actor_workflow}",
+        "evaluator_workflow": "${workflow.input.evaluator_workflow}",
+        "max_iterations": "${workflow.input.max_iterations}",
+        "max_retries": "${workflow.input.max_retries}",
+        "max_replans": "${workflow.input.max_replans}",
+        "token_budget": "${workflow.input.token_budget}",
+        "enable_human": "${workflow.input.enable_human}",
+        "escalate_on_limit": "${workflow.input.escalate_on_limit}",
+        "expression": "(function(){ function resolveConfig($) { function num(v, d) { if (v === null || v === undefined || v === '') { return d; } var n = Number(v); return isNaN(n) ? d : n; } function clamp(n, lo, hi) { if (n < lo) { return lo; } if (n > hi) { return hi; } return n; } function flag(v, d) { if (v === true || v === 'true') { return true; } if (v === false || v === 'false') { return false; } return d; } function str(v, d) { return (typeof v === 'string' && v.length > 0) ? v : d; } var PRESETS = { 'default': { max_iterations: 6,  max_retries: 3, max_replans: 1, token_budget: 200000 }, 'medium':  { max_iterations: 12, max_retries: 4, max_replans: 2, token_budget: 500000 }, 'high':    { max_iterations: 24, max_retries: 5, max_replans: 3, token_budget: 2000000 } }; var effort = ('' + ($.effort || 'default')).toLowerCase().trim(); if (effort === 'med') { effort = 'medium'; } if (!PRESETS[effort]) { effort = 'default'; } var p = PRESETS[effort]; var missing = []; if (!str($.objective, '')) { missing.push('objective'); } if (!str($.acceptance_criteria, '')) { missing.push('acceptance_criteria'); } if (!str($.llm_provider, '')) { missing.push('llm_provider'); } if (!str($.llm_model, '')) { missing.push('llm_model'); } var llmModel = str($.llm_model, ''); var actor = str($.actor_workflow, 'loop_actor'); return { valid: missing.length === 0 ? 'true' : 'false', error: missing.length === 0 ? '' : ('loop_engine: missing required input(s): ' + missing.join(', ') + '.'), effort: effort, max_iterations: clamp(num($.max_iterations, p.max_iterations), 1, 200), max_retries: clamp(num($.max_retries, p.max_retries), 1, 50), max_replans: clamp(num($.max_replans, p.max_replans), 0, 20), token_budget: clamp(num($.token_budget, p.token_budget), 0, 50000000), enable_human: flag($.enable_human, false), escalate_on_limit: flag($.escalate_on_limit, false), planner_workflow: str($.planner_workflow, 'loop_planner'), actor_workflow: actor, delegate_actor_workflow: str($.delegate_actor_workflow, actor), evaluator_workflow: str($.evaluator_workflow, 'loop_evaluator'), evaluator_llm_model: str($.evaluator_llm_model, llmModel) }; } return resolveConfig($); })();"
+      }
+    },
+    {
+      "name": "validate_config",
+      "taskReferenceName": "validate_config",
+      "type": "SWITCH",
+      "evaluatorType": "value-param",
+      "expression": "valid",
+      "inputParameters": {
+        "valid": "${resolve_config.output.result.valid}"
+      },
+      "decisionCases": {
+        "false": [
+          {
+            "name": "terminate_invalid",
+            "taskReferenceName": "terminate_invalid",
+            "type": "TERMINATE",
+            "inputParameters": {
+              "terminationStatus": "FAILED",
+              "terminationReason": "${resolve_config.output.result.error}"
+            }
+          }
+        ]
+      },
+      "defaultCase": []
+    },
+    {
+      "name": "plan",
+      "taskReferenceName": "plan",
+      "type": "SUB_WORKFLOW",
+      "optional": true,
+      "subWorkflowParam": {
+        "name": "${resolve_config.output.result.planner_workflow}",
+        "version": 1
+      },
+      "inputParameters": {
+        "objective": "${workflow.input.objective}",
+        "acceptance_criteria": "${workflow.input.acceptance_criteria}",
+        "context": "${workflow.input.context}",
+        "feedback": "",
+        "history": [],
+        "effort": "${resolve_config.output.result.effort}",
+        "llm_provider": "${workflow.input.llm_provider}",
+        "llm_model": "${workflow.input.llm_model}",
+        "extension_params": "${workflow.input.extension_params}"
+      }
+    },
+    {
+      "name": "plan_guard",
+      "taskReferenceName": "plan_guard",
+      "type": "INLINE",
+      "inputParameters": {
+        "evaluatorType": "graaljs",
+        "plan": "${plan.output.plan}",
+        "tokens": "${plan.output.tokens}",
+        "expression": "(function(){ var p=$.plan; var ok=!(p===null||p===undefined); var t=Number($.tokens); if(isNaN(t))t=0; return { plan: ok? (''+p) : 'No plan available (planner unavailable); work directly from the OBJECTIVE and ACCEPTANCE CRITERIA.', tokens: t }; })();"
+      }
+    },
+    {
+      "name": "init_state",
+      "taskReferenceName": "init_state",
+      "type": "SET_VARIABLE",
+      "inputParameters": {
+        "plan": "${plan_guard.output.result.plan}",
+        "spent_tokens": "${plan_guard.output.result.tokens}",
+        "active_actor": "${resolve_config.output.result.actor_workflow}",
+        "status": "running"
+      }
+    },
+    {
+      "name": "control_loop",
+      "taskReferenceName": "control_loop",
+      "type": "DO_WHILE",
+      "evaluatorType": "graaljs",
+      "loopCondition": "(function(){ return $.control_loop['iteration'] < $.max_iterations && $.status === 'running'; })();",
+      "inputParameters": {
+        "control_loop": "${control_loop.output}",
+        "max_iterations": "${resolve_config.output.result.max_iterations}",
+        "status": "${workflow.variables.status}"
+      },
+      "loopOver": [
+        {
+          "name": "act",
+          "taskReferenceName": "act",
+          "type": "SUB_WORKFLOW",
+          "optional": true,
+          "subWorkflowParam": {
+            "name": "${workflow.variables.active_actor}",
+            "version": 1
+          },
+          "inputParameters": {
+            "objective": "${workflow.input.objective}",
+            "acceptance_criteria": "${workflow.input.acceptance_criteria}",
+            "context": "${workflow.input.context}",
+            "plan": "${workflow.variables.plan}",
+            "feedback": "${workflow.variables.feedback}",
+            "iteration": "${control_loop.output.iteration}",
+            "history": "${workflow.variables.history}",
+            "effort": "${resolve_config.output.result.effort}",
+            "llm_provider": "${workflow.input.llm_provider}",
+            "llm_model": "${workflow.input.llm_model}",
+            "extension_params": "${workflow.input.extension_params}"
+          }
+        },
+        {
+          "name": "act_guard",
+          "taskReferenceName": "act_guard",
+          "type": "INLINE",
+          "inputParameters": {
+            "evaluatorType": "graaljs",
+            "result": "${act.output.result}",
+            "tokens": "${act.output.tokens}",
+            "expression": "(function(){ var ok = !($.result===null || $.result===undefined); var t=Number($.tokens); if(isNaN(t))t=0; return { ok: ok, tokens: t, error: ok ? '' : 'Actor sub-workflow failed or returned no result.' }; })();"
+          }
+        },
+        {
+          "name": "evaluate",
+          "taskReferenceName": "evaluate",
+          "type": "SUB_WORKFLOW",
+          "optional": true,
+          "subWorkflowParam": {
+            "name": "${resolve_config.output.result.evaluator_workflow}",
+            "version": 1
+          },
+          "inputParameters": {
+            "objective": "${workflow.input.objective}",
+            "acceptance_criteria": "${workflow.input.acceptance_criteria}",
+            "result": "${act.output.result}",
+            "summary": "${act.output.summary}",
+            "context": "${workflow.input.context}",
+            "effort": "${resolve_config.output.result.effort}",
+            "llm_provider": "${workflow.input.llm_provider}",
+            "llm_model": "${resolve_config.output.result.evaluator_llm_model}",
+            "extension_params": "${workflow.input.extension_params}"
+          }
+        },
+        {
+          "name": "eval_guard",
+          "taskReferenceName": "eval_guard",
+          "type": "INLINE",
+          "inputParameters": {
+            "evaluatorType": "graaljs",
+            "act_ok": "${act_guard.output.result.ok}",
+            "act_error": "${act_guard.output.result.error}",
+            "passed": "${evaluate.output.passed}",
+            "score": "${evaluate.output.score}",
+            "feedback": "${evaluate.output.feedback}",
+            "recommend": "${evaluate.output.recommend}",
+            "tokens": "${evaluate.output.tokens}",
+            "expression": "(function(){ function evalGuard($) { var FEEDBACK_MAX = 2000; function flag(v) { return v === true || v === 'true'; } function num(v, d) { var n = Number(v); return isNaN(n) ? d : n; } function isNil(v) { return v === null || v === undefined; } var actOk = isNil($.act_ok) ? true : flag($.act_ok); var evalOk = !isNil($.passed) || !isNil($.score) || (typeof $.feedback === 'string' && $.feedback.length > 0); var passed = flag($.passed); var score = num($.score, 0); if (score < 0) { score = 0; } var feedback = isNil($.feedback) ? '' : ('' + $.feedback); var recommend = '' + ($.recommend || ''); var tokens = num($.tokens, 0); if (!actOk) { passed = false; score = 0; recommend = ''; var err = (typeof $.act_error === 'string' && $.act_error.length > 0) ? (' ' + $.act_error) : ''; feedback = 'INFRA: the actor sub-workflow failed to produce a result; this attempt never executed.' + err; } else if (!evalOk) { passed = false; score = 0; recommend = ''; feedback = 'INFRA: the evaluator sub-workflow returned no verdict; this attempt cannot be judged.'; } if (feedback.length > FEEDBACK_MAX) { feedback = feedback.substring(0, FEEDBACK_MAX) + ' ...[truncated]'; } return { act_ok: actOk, eval_ok: evalOk, passed: passed, score: score, feedback: feedback, recommend: recommend, tokens: tokens }; } return evalGuard($); })();"
+          }
+        },
+        {
+          "name": "decide",
+          "taskReferenceName": "decide",
+          "type": "INLINE",
+          "inputParameters": {
+            "evaluatorType": "graaljs",
+            "passed": "${eval_guard.output.result.passed}",
+            "score": "${eval_guard.output.result.score}",
+            "recommend": "${eval_guard.output.result.recommend}",
+            "act_ok": "${eval_guard.output.result.act_ok}",
+            "eval_ok": "${eval_guard.output.result.eval_ok}",
+            "fail_streak": "${workflow.variables.fail_streak}",
+            "infra_streak": "${workflow.variables.infra_streak}",
+            "best_score": "${workflow.variables.best_score}",
+            "replans_used": "${workflow.variables.replans_used}",
+            "spent_tokens": "${workflow.variables.spent_tokens}",
+            "act_tokens": "${act_guard.output.result.tokens}",
+            "eval_tokens": "${eval_guard.output.result.tokens}",
+            "token_budget": "${resolve_config.output.result.token_budget}",
+            "max_retries": "${resolve_config.output.result.max_retries}",
+            "max_replans": "${resolve_config.output.result.max_replans}",
+            "enable_human": "${resolve_config.output.result.enable_human}",
+            "escalate_on_limit": "${resolve_config.output.result.escalate_on_limit}",
+            "expression": "(function(){ function decide($) { function num(v, d) { var n = Number(v); return isNaN(n) ? d : n; } function flag(v) { return v === true || v === 'true'; } var actOk = ($.act_ok === null || $.act_ok === undefined) ? true : flag($.act_ok); var evalOk = ($.eval_ok === null || $.eval_ok === undefined) ? true : flag($.eval_ok); var passed = flag($.passed) && actOk && evalOk; var score = num($.score, 0); var best = num($.best_score, 0); var fs = num($.fail_streak, 0); var infra = num($.infra_streak, 0); var ru = num($.replans_used, 0); var spent = num($.spent_tokens, 0) + num($.act_tokens, 0) + num($.eval_tokens, 0); var budget = num($.token_budget, 0); var maxRetries = num($.max_retries, 3); var maxReplans = num($.max_replans, 1); var human = flag($.enable_human); var escLimit = flag($.escalate_on_limit); var rec = '' + ($.recommend || ''); var decision = 'retry'; var status = 'running'; var reason = ''; if (passed) { decision = 'accept'; status = 'succeeded'; reason = 'Acceptance criteria satisfied.'; } else if (budget > 0 && spent >= budget) { if (escLimit && human) { decision = 'escalate'; status = 'escalated'; reason = 'Token budget exhausted (' + spent + '/' + budget + '); escalating to human.'; } else { decision = 'stop'; status = 'stopped_budget'; reason = 'Token budget exhausted (' + spent + '/' + budget + ').'; } } else if (!actOk || !evalOk) { infra = infra + 1; var part = !actOk ? 'Actor' : 'Evaluator'; if (infra >= maxRetries) { if (human) { decision = 'escalate'; status = 'escalated'; reason = part + ' sub-workflow failed ' + infra + ' consecutive times; escalating to human.'; } else { decision = 'stop'; status = 'stopped_infra_failure'; reason = part + ' sub-workflow failed ' + infra + ' consecutive times; stopping.'; } } else { decision = 'retry'; reason = part + ' sub-workflow failed (infra streak ' + infra + '/' + maxRetries + '); retrying the iteration.'; } } else if (rec === 'delegate') { decision = 'delegate'; fs = 0; infra = 0; reason = 'Evaluator recommended delegating to the alternate actor.'; } else { infra = 0; if (score > best + 0.01) { decision = 'retry'; fs = 0; reason = 'Score improved (' + best + ' -> ' + score + '); retrying with feedback.'; } else { fs = fs + 1; if (fs >= maxRetries) { if (ru < maxReplans) { decision = 'replan'; ru = ru + 1; fs = 0; reason = 'No progress after ' + maxRetries + ' tries; replanning (' + ru + '/' + maxReplans + ').'; } else if (human) { decision = 'escalate'; status = 'escalated'; reason = 'No progress and replans exhausted; escalating to human.'; } else { decision = 'stop'; status = 'stopped_no_progress'; reason = 'No progress and replans exhausted; stopping.'; } } else { decision = 'retry'; reason = 'Not passing yet (fail streak ' + fs + '/' + maxRetries + '); retrying with feedback.'; } } } return { decision: decision, status: status, fail_streak: fs, infra_streak: infra, replans_used: ru, spent_tokens: spent, reason: reason }; } return decide($); })();"
+          }
+        },
+        {
+          "name": "merge_state",
+          "taskReferenceName": "merge_state",
+          "type": "JSON_JQ_TRANSFORM",
+          "inputParameters": {
+            "history": "${workflow.variables.history}",
+            "iteration": "${control_loop.output.iteration}",
+            "score": "${eval_guard.output.result.score}",
+            "passed": "${eval_guard.output.result.passed}",
+            "actOk": "${eval_guard.output.result.act_ok}",
+            "decision": "${decide.output.result.decision}",
+            "reason": "${decide.output.result.reason}",
+            "feedback": "${eval_guard.output.result.feedback}",
+            "candidate": "${act.output.result}",
+            "candScore": "${eval_guard.output.result.score}",
+            "bestResult": "${workflow.variables.best_result}",
+            "bestScore": "${workflow.variables.best_score}",
+            "tokensTotal": "${decide.output.result.spent_tokens}",
+            "queryExpression": "{ history: (((.history // []) + [{iteration: .iteration, score: .score, passed: .passed, decision: .decision, reason: .reason, feedback: .feedback, tokens_total: .tokensTotal}]) | .[-50:]), best_result: (if ((.actOk == true) and ((.passed == true) or (.candScore > .bestScore))) then .candidate else .bestResult end), best_score: (if ((.actOk == true) and ((.passed == true) or (.candScore > .bestScore))) then .candScore else .bestScore end) }"
+          }
+        },
+        {
+          "name": "commit_core",
+          "taskReferenceName": "commit_core",
+          "type": "SET_VARIABLE",
+          "inputParameters": {
+            "fail_streak": "${decide.output.result.fail_streak}",
+            "infra_streak": "${decide.output.result.infra_streak}",
+            "replans_used": "${decide.output.result.replans_used}",
+            "spent_tokens": "${decide.output.result.spent_tokens}",
+            "feedback": "${eval_guard.output.result.feedback}",
+            "history": "${merge_state.output.result.history}",
+            "best_result": "${merge_state.output.result.best_result}",
+            "best_score": "${merge_state.output.result.best_score}",
+            "last_decision": "${decide.output.result.decision}",
+            "escalation_reason": "${decide.output.result.reason}"
+          }
+        },
+        {
+          "name": "route",
+          "taskReferenceName": "route",
+          "type": "SWITCH",
+          "evaluatorType": "value-param",
+          "expression": "decision",
+          "inputParameters": {
+            "decision": "${decide.output.result.decision}"
+          },
+          "decisionCases": {
+            "accept": [
+              {
+                "name": "set_accept",
+                "taskReferenceName": "set_accept",
+                "type": "SET_VARIABLE",
+                "inputParameters": {
+                  "status": "succeeded"
+                }
+              }
+            ],
+            "retry": [
+              {
+                "name": "set_retry",
+                "taskReferenceName": "set_retry",
+                "type": "SET_VARIABLE",
+                "inputParameters": {
+                  "status": "running"
+                }
+              }
+            ],
+            "replan": [
+              {
+                "name": "replan",
+                "taskReferenceName": "replan",
+                "type": "SUB_WORKFLOW",
+                "optional": true,
+                "subWorkflowParam": {
+                  "name": "${resolve_config.output.result.planner_workflow}",
+                  "version": 1
+                },
+                "inputParameters": {
+                  "objective": "${workflow.input.objective}",
+                  "acceptance_criteria": "${workflow.input.acceptance_criteria}",
+                  "context": "${workflow.input.context}",
+                  "feedback": "${workflow.variables.feedback}",
+                  "history": "${workflow.variables.history}",
+                  "effort": "${resolve_config.output.result.effort}",
+                  "llm_provider": "${workflow.input.llm_provider}",
+                  "llm_model": "${workflow.input.llm_model}",
+                  "extension_params": "${workflow.input.extension_params}"
+                }
+              },
+              {
+                "name": "replan_guard",
+                "taskReferenceName": "replan_guard",
+                "type": "INLINE",
+                "inputParameters": {
+                  "evaluatorType": "graaljs",
+                  "plan": "${replan.output.plan}",
+                  "tokens": "${replan.output.tokens}",
+                  "cur": "${workflow.variables.spent_tokens}",
+                  "old_plan": "${workflow.variables.plan}",
+                  "expression": "(function(){ var p=$.plan; var ok=!(p===null||p===undefined||(''+p).length===0); var cur=Number($.cur); if(isNaN(cur))cur=0; var t=Number($.tokens); if(isNaN(t))t=0; return { plan: ok? (''+p) : (''+($.old_plan||'')), spent_tokens: cur+t }; })();"
+                }
+              },
+              {
+                "name": "set_replan",
+                "taskReferenceName": "set_replan",
+                "type": "SET_VARIABLE",
+                "inputParameters": {
+                  "plan": "${replan_guard.output.result.plan}",
+                  "status": "running",
+                  "spent_tokens": "${replan_guard.output.result.spent_tokens}"
+                }
+              }
+            ],
+            "delegate": [
+              {
+                "name": "set_delegate",
+                "taskReferenceName": "set_delegate",
+                "type": "SET_VARIABLE",
+                "inputParameters": {
+                  "active_actor": "${resolve_config.output.result.delegate_actor_workflow}",
+                  "status": "running"
+                }
+              }
+            ],
+            "escalate": [
+              {
+                "name": "human_review",
+                "taskReferenceName": "human_review",
+                "type": "HUMAN"
+              },
+              {
+                "name": "human_norm",
+                "taskReferenceName": "human_norm",
+                "type": "INLINE",
+                "inputParameters": {
+                  "evaluatorType": "graaljs",
+                  "hs": "${human_review.output.status}",
+                  "hf": "${human_review.output.feedback}",
+                  "expression": "(function(){ var hs=(typeof $.hs==='string'&&$.hs.length>0)?$.hs:'running'; var hf=(typeof $.hf==='string')?$.hf:''; return { status:hs, feedback:hf }; })();"
+                }
+              },
+              {
+                "name": "set_human",
+                "taskReferenceName": "set_human",
+                "type": "SET_VARIABLE",
+                "inputParameters": {
+                  "status": "${human_norm.output.result.status}",
+                  "feedback": "${human_norm.output.result.feedback}"
+                }
+              }
+            ],
+            "stop": [
+              {
+                "name": "set_stop",
+                "taskReferenceName": "set_stop",
+                "type": "SET_VARIABLE",
+                "inputParameters": {
+                  "status": "${decide.output.result.status}"
+                }
+              }
+            ]
+          },
+          "defaultCase": [
+            {
+              "name": "set_unknown",
+              "taskReferenceName": "set_unknown",
+              "type": "SET_VARIABLE",
+              "inputParameters": {
+                "status": "stopped_unknown_decision"
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "finalize",
+      "taskReferenceName": "finalize",
+      "type": "INLINE",
+      "inputParameters": {
+        "evaluatorType": "graaljs",
+        "st": "${workflow.variables.status}",
+        "expression": "(function(){ var st=''+($.st||''); if(st==='running'){ return 'stopped_max_iterations'; } return st; })();"
+      }
+    },
+    {
+      "name": "commit_final",
+      "taskReferenceName": "commit_final",
+      "type": "SET_VARIABLE",
+      "inputParameters": {
+        "status": "${finalize.output.result}"
+      }
+    }
+  ],
+  "outputParameters": {
+    "status": "${workflow.variables.status}",
+    "result": "${workflow.variables.best_result}",
+    "score": "${workflow.variables.best_score}",
+    "iterations": "${control_loop.output.iteration}",
+    "last_decision": "${workflow.variables.last_decision}",
+    "decision_log": "${workflow.variables.history}",
+    "tokens_spent": "${workflow.variables.spent_tokens}",
+    "final_plan": "${workflow.variables.plan}",
+    "termination_reason": "${workflow.variables.escalation_reason}",
+    "config": "${resolve_config.output.result}"
+  }
+}

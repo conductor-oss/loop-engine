@@ -1,0 +1,30 @@
+{
+  "name": "refund_evaluator",
+  "description": "EVALUATOR for the refund/support loop. A Python worker (verify_refund) checks the ACTUAL ledger + policy (refund window, max refundable) — it does not trust the agent's claim that a refund was issued.",
+  "version": 1,
+  "schemaVersion": 2,
+  "ownerEmail": "viren@orkes.io",
+  "timeoutPolicy": "TIME_OUT_WF",
+  "timeoutSeconds": 300,
+  "inputParameters": ["objective", "acceptance_criteria", "result", "summary", "context", "llm_provider", "llm_model", "extension_params"],
+  "tasks": [
+    {
+      "name": "verify_refund",
+      "taskReferenceName": "verify",
+      "type": "SIMPLE",
+      "inputParameters": {
+        "order_id": "${workflow.input.extension_params.order_id}",
+        "action": "${workflow.input.result.action}",
+        "amount": "${workflow.input.result.amount}"
+      }
+    }
+  ],
+  "outputParameters": {
+    "passed": "${verify.output.passed}",
+    "score": "${verify.output.score}",
+    "feedback": "${verify.output.feedback}",
+    "recommend": "${verify.output.recommend}",
+    "checks": "${verify.output}",
+    "tokens": 0
+  }
+}

@@ -1,0 +1,51 @@
+{
+  "name": "loop_actor",
+  "description": "Default ACTOR extension point for loop_engine. Produces one attempt at the deliverable, incorporating the plan and the evaluator's feedback on the previous attempt. Swap by passing actor_workflow (or delegate_actor_workflow) to loop_engine.",
+  "version": 1,
+  "schemaVersion": 2,
+  "ownerEmail": "viren@orkes.io",
+  "timeoutPolicy": "TIME_OUT_WF",
+  "timeoutSeconds": 600,
+  "inputParameters": ["objective", "acceptance_criteria", "plan", "context", "feedback", "iteration", "history", "effort", "llm_provider", "llm_model", "extension_params"],
+  "tasks": [
+    {
+      "name": "act_cfg",
+      "taskReferenceName": "act_cfg",
+      "type": "INLINE",
+      "inputParameters": {
+        "evaluatorType": "graaljs",
+        "effort": "${workflow.input.effort}",
+        "expression": "(function(){ var e=(''+($.effort||'default')).toLowerCase().trim(); var mt=2000; if(e==='medium'){mt=3000;} else if(e==='high'){mt=4500;} return { max_tokens: mt }; })();"
+      }
+    },
+    {
+      "name": "act_llm",
+      "taskReferenceName": "act_llm",
+      "type": "LLM_CHAT_COMPLETE",
+      "inputParameters": {
+        "llmProvider": "${workflow.input.llm_provider}",
+        "model": "${workflow.input.llm_model}",
+        "temperature": 0.7,
+        "maxTokens": "${act_cfg.output.result.max_tokens}",
+        "messages": [
+          {"role": "system", "message": "You are an EXECUTION agent inside an engineered loop. Produce the best possible attempt at the requested deliverable. Output ONLY the deliverable itself — no explanation, no preamble, no markdown fences. If evaluator feedback on a previous attempt is provided, your previous attempt was REJECTED: change it materially to address every point raised."},
+          {"role": "user", "message": "OBJECTIVE:\n${workflow.input.objective}\n\nACCEPTANCE CRITERIA:\n${workflow.input.acceptance_criteria}\n\nCONTEXT:\n${workflow.input.context}\n\nSTRATEGY / PLAN:\n${workflow.input.plan}\n\nEVALUATOR FEEDBACK ON YOUR PREVIOUS ATTEMPT (empty = this is your first attempt):\n${workflow.input.feedback}\n\nProduce the deliverable now."}
+        ]
+      }
+    },
+    {
+      "name": "make_summary",
+      "taskReferenceName": "make_summary",
+      "type": "JSON_JQ_TRANSFORM",
+      "inputParameters": {
+        "result": "${act_llm.output.result}",
+        "queryExpression": "(.result // \"\") | tostring | .[0:200]"
+      }
+    }
+  ],
+  "outputParameters": {
+    "result": "${act_llm.output.result}",
+    "summary": "${make_summary.output.result}",
+    "tokens": "${act_llm.output.tokenUsed}"
+  }
+}

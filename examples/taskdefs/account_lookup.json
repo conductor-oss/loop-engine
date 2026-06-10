@@ -1,0 +1,14 @@
+{
+  "name": "account_lookup",
+  "description": "Read-only lookup of customer account + order facts and refund policy for a support case.",
+  "retryCount": 3,
+  "retryLogic": "EXPONENTIAL_BACKOFF",
+  "retryDelaySeconds": 1,
+  "timeoutSeconds": 30,
+  "timeoutPolicy": "RETRY",
+  "responseTimeoutSeconds": 20,
+  "pollTimeoutSeconds": 3600,
+  "ownerEmail": "viren@orkes.io",
+  "inputKeys": ["customer_id", "order_id"],
+  "outputKeys": ["found", "customer", "order", "policy", "error"]
+}

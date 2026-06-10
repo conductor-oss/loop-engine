@@ -1,0 +1,16 @@
+{
+  "objective": "Resolve this customer refund request. The customer wrote: 'My mechanical keyboard (order ORD-5002) stopped working. Please refund me the $80 I paid.'",
+  "acceptance_criteria": "Refund policy: refunds are allowed only within 30 days of purchase; the refund amount must NOT exceed the order total; if the order is outside the window, escalate to a human instead of refunding. Take the correct action per policy.",
+  "context": "You may issue a refund or escalate. The order total, currency and days since purchase are in the facts. Do not refund outside the policy window even if the request sounds reasonable.",
+  "actor_workflow": "refund_actor",
+  "evaluator_workflow": "refund_evaluator",
+  "max_iterations": 5,
+  "max_replans": 0,
+  "token_budget": 400000,
+  "llm_provider": "anthropic",
+  "llm_model": "claude-opus-4-7",
+  "extension_params": {
+    "customer_id": "CUST-1001",
+    "order_id": "ORD-5002"
+  }
+}

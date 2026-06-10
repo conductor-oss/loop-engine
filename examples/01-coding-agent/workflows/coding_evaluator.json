@@ -1,0 +1,30 @@
+{
+  "name": "coding_evaluator",
+  "description": "EVALUATOR for the coding-agent loop. Runs the LLM-written code against operator-supplied test cases via the generic python_code_runner worker. Pure deterministic evidence — the verdict is whether the code actually passes, not what the model claims.",
+  "version": 1,
+  "schemaVersion": 2,
+  "ownerEmail": "viren@orkes.io",
+  "timeoutPolicy": "TIME_OUT_WF",
+  "timeoutSeconds": 600,
+  "inputParameters": ["objective", "acceptance_criteria", "result", "summary", "context", "llm_provider", "llm_model", "extension_params"],
+  "tasks": [
+    {
+      "name": "python_code_runner",
+      "taskReferenceName": "run_tests",
+      "type": "SIMPLE",
+      "inputParameters": {
+        "code": "${workflow.input.result}",
+        "cases": "${workflow.input.extension_params.cases}",
+        "timeout_seconds": "${workflow.input.extension_params.timeout_seconds}"
+      }
+    }
+  ],
+  "outputParameters": {
+    "passed": "${run_tests.output.passed}",
+    "score": "${run_tests.output.score}",
+    "feedback": "${run_tests.output.feedback}",
+    "recommend": "",
+    "checks": "${run_tests.output}",
+    "tokens": 0
+  }
+}

@@ -1,0 +1,14 @@
+{
+  "name": "issue_refund",
+  "description": "Upsert a refund into the ledger. Idempotent on identical (order_id, amount); a different amount corrects the entry. Side-effecting backend write.",
+  "retryCount": 1,
+  "retryLogic": "FIXED",
+  "retryDelaySeconds": 2,
+  "timeoutSeconds": 30,
+  "timeoutPolicy": "RETRY",
+  "responseTimeoutSeconds": 20,
+  "pollTimeoutSeconds": 3600,
+  "ownerEmail": "viren@orkes.io",
+  "inputKeys": ["order_id", "amount", "reason"],
+  "outputKeys": ["refund_id", "order_id", "amount", "status", "idempotent_replay"]
+}

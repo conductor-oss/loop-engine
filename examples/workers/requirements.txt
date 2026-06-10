@@ -1,0 +1,3 @@
+# Pinned to a compatible range for reproducible builds (upper bound guards a major bump).
+# For deploys, generate a lockfile with hashes (e.g. pip-compile / uv lock).
+conductor-python>=1.3.0,<2.0

@@ -1,0 +1,29 @@
+{
+  "name": "data_quality_evaluator",
+  "description": "EVALUATOR for the data-quality loop. A Python worker (data_quality_check) evaluates the cleaned dataset against a deterministic data contract and returns passed/score/violations.",
+  "version": 1,
+  "schemaVersion": 2,
+  "ownerEmail": "viren@orkes.io",
+  "timeoutPolicy": "TIME_OUT_WF",
+  "timeoutSeconds": 300,
+  "inputParameters": ["objective", "acceptance_criteria", "result", "summary", "context", "llm_provider", "llm_model", "extension_params"],
+  "tasks": [
+    {
+      "name": "data_quality_check",
+      "taskReferenceName": "check",
+      "type": "SIMPLE",
+      "inputParameters": {
+        "records": "${workflow.input.result}",
+        "contract": "${workflow.input.extension_params.contract}"
+      }
+    }
+  ],
+  "outputParameters": {
+    "passed": "${check.output.passed}",
+    "score": "${check.output.score}",
+    "feedback": "${check.output.feedback}",
+    "recommend": "",
+    "checks": "${check.output}",
+    "tokens": 0
+  }
+}

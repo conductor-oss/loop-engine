@@ -1,0 +1,22 @@
+{
+  "objective": "Write a single one-sentence positioning tagline for Conductor, the durable execution platform that runs autonomous software in production.",
+  "acceptance_criteria": "MUST be <= 120 characters total. MUST contain the words 'durable', 'runtime', and 'production'. MUST be a single punchy, concrete sentence. MUST NOT contain any of these words: 'agent', 'agents', 'ai', 'llm', 'revolutionary', 'synergy'.",
+  "context": "Conductor is a framework-agnostic durable runtime/backend for autonomous software. Audience: platform engineers shipping long-running automated workflows to production. The angle competitors miss: everyone helps you AUTHOR these workflows; nobody owns the RUNTIME where they actually run reliably.",
+  "planner_workflow": "loop_planner",
+  "actor_workflow": "loop_actor",
+  "delegate_actor_workflow": "loop_actor",
+  "evaluator_workflow": "loop_demo_text_evaluator",
+  "max_iterations": 6,
+  "max_retries": 3,
+  "max_replans": 1,
+  "token_budget": 400000,
+  "enable_human": false,
+  "escalate_on_limit": false,
+  "llm_provider": "anthropic",
+  "llm_model": "claude-opus-4-7",
+  "extension_params": {
+    "max_chars": 120,
+    "required_keywords": "durable,runtime,production",
+    "banned_words": "agent,agents,ai,llm,revolutionary,synergy"
+  }
+}

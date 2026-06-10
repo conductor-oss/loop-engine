@@ -1,0 +1,37 @@
+{
+  "name": "data_cleaning_actor",
+  "description": "ACTOR for the data-quality loop. A Python worker (clean_dataset) does the real ETL work, escalating its strategy when the evaluator reports violations.",
+  "version": 1,
+  "schemaVersion": 2,
+  "ownerEmail": "viren@orkes.io",
+  "timeoutPolicy": "TIME_OUT_WF",
+  "timeoutSeconds": 300,
+  "inputParameters": ["objective", "acceptance_criteria", "plan", "context", "feedback", "iteration", "history", "llm_provider", "llm_model", "extension_params"],
+  "tasks": [
+    {
+      "name": "clean_dataset",
+      "taskReferenceName": "clean",
+      "type": "SIMPLE",
+      "inputParameters": {
+        "dataset": "${workflow.input.extension_params.dataset}",
+        "iteration": "${workflow.input.iteration}",
+        "feedback": "${workflow.input.feedback}",
+        "contract": "${workflow.input.extension_params.contract}"
+      }
+    },
+    {
+      "name": "make_summary",
+      "taskReferenceName": "make_summary",
+      "type": "JSON_JQ_TRANSFORM",
+      "inputParameters": {
+        "outc": "${clean.output.out_count}",
+        "queryExpression": "(.outc | tostring) + \" rows after cleaning\""
+      }
+    }
+  ],
+  "outputParameters": {
+    "result": "${clean.output.records}",
+    "summary": "${make_summary.output.result}",
+    "tokens": 0
+  }
+}

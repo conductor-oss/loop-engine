@@ -1,0 +1,50 @@
+{
+  "name": "loop_planner",
+  "description": "Default PLANNER extension point for loop_engine. Produces (or revises, on replan) a concrete strategy the actor follows. Swap by passing planner_workflow to loop_engine.",
+  "version": 1,
+  "schemaVersion": 2,
+  "ownerEmail": "viren@orkes.io",
+  "timeoutPolicy": "TIME_OUT_WF",
+  "timeoutSeconds": 600,
+  "inputParameters": ["objective", "acceptance_criteria", "context", "feedback", "history", "effort", "llm_provider", "llm_model", "extension_params"],
+  "tasks": [
+    {
+      "name": "plan_cfg",
+      "taskReferenceName": "plan_cfg",
+      "type": "INLINE",
+      "inputParameters": {
+        "evaluatorType": "graaljs",
+        "effort": "${workflow.input.effort}",
+        "expression": "(function(){ var e=(''+($.effort||'default')).toLowerCase().trim(); var mt=1200; if(e==='medium'){mt=1800;} else if(e==='high'){mt=2400;} return { max_tokens: mt }; })();"
+      }
+    },
+    {
+      "name": "history_to_text",
+      "taskReferenceName": "history_to_text",
+      "type": "JSON_JQ_TRANSFORM",
+      "inputParameters": {
+        "history": "${workflow.input.history}",
+        "queryExpression": "(.history // []) | tojson"
+      }
+    },
+    {
+      "name": "make_plan",
+      "taskReferenceName": "make_plan",
+      "type": "LLM_CHAT_COMPLETE",
+      "inputParameters": {
+        "llmProvider": "${workflow.input.llm_provider}",
+        "model": "${workflow.input.llm_model}",
+        "temperature": 0.3,
+        "maxTokens": "${plan_cfg.output.result.max_tokens}",
+        "messages": [
+          {"role": "system", "message": "You are the PLANNING module inside an engineered agent loop. Produce a concise, concrete strategy the execution agent can follow to satisfy the objective and EVERY acceptance criterion. If prior failed attempts are listed, diagnose why they failed and change the approach — never repeat a strategy that already failed. Output a short numbered plan only. No preamble."},
+          {"role": "user", "message": "OBJECTIVE:\n${workflow.input.objective}\n\nACCEPTANCE CRITERIA:\n${workflow.input.acceptance_criteria}\n\nCONTEXT:\n${workflow.input.context}\n\nPRIOR ATTEMPTS (JSON; empty array means first plan):\n${history_to_text.output.result}\n\nMOST RECENT EVALUATOR FEEDBACK:\n${workflow.input.feedback}"}
+        ]
+      }
+    }
+  ],
+  "outputParameters": {
+    "plan": "${make_plan.output.result}",
+    "tokens": "${make_plan.output.tokenUsed}"
+  }
+}

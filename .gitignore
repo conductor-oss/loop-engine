@@ -1,0 +1,11 @@
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# Worker runtime state (simulated backend store for the refund example)
+examples/workers/.state/
+
+# macOS
+.DS_Store

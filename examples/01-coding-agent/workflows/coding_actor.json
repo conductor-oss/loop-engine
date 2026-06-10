@@ -1,0 +1,51 @@
+{
+  "name": "coding_actor",
+  "description": "ACTOR for the coding-agent loop. An LLM writes Python source to satisfy the spec, using the evaluator's failing-test feedback to fix bugs on each attempt.",
+  "version": 1,
+  "schemaVersion": 2,
+  "ownerEmail": "viren@orkes.io",
+  "timeoutPolicy": "TIME_OUT_WF",
+  "timeoutSeconds": 600,
+  "inputParameters": ["objective", "acceptance_criteria", "plan", "context", "feedback", "iteration", "history", "effort", "llm_provider", "llm_model", "extension_params"],
+  "tasks": [
+    {
+      "name": "code_cfg",
+      "taskReferenceName": "code_cfg",
+      "type": "INLINE",
+      "inputParameters": {
+        "evaluatorType": "graaljs",
+        "effort": "${workflow.input.effort}",
+        "expression": "(function(){ var e=(''+($.effort||'default')).toLowerCase().trim(); var mt=1500; if(e==='medium'){mt=2500;} else if(e==='high'){mt=4000;} return { max_tokens: mt }; })();"
+      }
+    },
+    {
+      "name": "write_code",
+      "taskReferenceName": "write_code",
+      "type": "LLM_CHAT_COMPLETE",
+      "inputParameters": {
+        "llmProvider": "${workflow.input.llm_provider}",
+        "model": "${workflow.input.llm_model}",
+        "temperature": 0.2,
+        "maxTokens": "${code_cfg.output.result.max_tokens}",
+        "messages": [
+          {"role": "system", "message": "You are a coding agent. Output ONLY valid Python source code — no markdown fences, no commentary, no examples. Define exactly the function(s) the task requires so they pass automated tests. If evaluator feedback lists failing assertions or a traceback, your previous code was wrong: fix those specific issues. Handle edge cases. Do not print anything."},
+          {"role": "user", "message": "TASK:\n${workflow.input.objective}\n\nREQUIREMENTS:\n${workflow.input.acceptance_criteria}\n\nSPEC / SIGNATURE:\n${workflow.input.context}\n\nSTRATEGY:\n${workflow.input.plan}\n\nEVALUATOR FEEDBACK ON YOUR PREVIOUS ATTEMPT (empty = first attempt):\n${workflow.input.feedback}\n\nWrite the complete Python now."}
+        ]
+      }
+    },
+    {
+      "name": "make_summary",
+      "taskReferenceName": "make_summary",
+      "type": "JSON_JQ_TRANSFORM",
+      "inputParameters": {
+        "result": "${write_code.output.result}",
+        "queryExpression": "(.result // \"\") | tostring | .[0:200]"
+      }
+    }
+  ],
+  "outputParameters": {
+    "result": "${write_code.output.result}",
+    "summary": "${make_summary.output.result}",
+    "tokens": "${write_code.output.tokenUsed}"
+  }
+}

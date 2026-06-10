@@ -1,0 +1,7 @@
+{
+  "objective": "Write a one-paragraph executive summary explaining why durable execution matters for AI agents in production.",
+  "acceptance_criteria": "MUST be a single paragraph of 3 to 5 sentences. MUST mention at least one concrete failure mode of non-durable agents (e.g. lost state on crash, duplicated side effects). MUST be written for a CTO audience: no hype words, no second person.",
+  "effort": "medium",
+  "llm_provider": "anthropic",
+  "llm_model": "claude-opus-4-7"
+}

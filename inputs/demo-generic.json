@@ -1,0 +1,18 @@
+{
+  "objective": "Draft a 2-3 sentence incident-postmortem summary for a production outage where an AI agent loop retried a failing payment 400 times because no termination condition was set.",
+  "acceptance_criteria": "Must clearly state the root cause (missing termination/guardrail), the customer impact, and one concrete prevention step. Must be factual and blameless in tone. No marketing language.",
+  "context": "Audience: an engineering org's incident review channel. The fix being adopted is loop engineering: explicit termination conditions, max-retry caps, and a deterministic decision policy.",
+  "planner_workflow": "loop_planner",
+  "actor_workflow": "loop_actor",
+  "delegate_actor_workflow": "loop_actor",
+  "evaluator_workflow": "loop_evaluator",
+  "max_iterations": 4,
+  "max_retries": 2,
+  "max_replans": 1,
+  "token_budget": 400000,
+  "enable_human": false,
+  "escalate_on_limit": false,
+  "llm_provider": "anthropic",
+  "llm_model": "claude-opus-4-7",
+  "extension_params": {}
+}

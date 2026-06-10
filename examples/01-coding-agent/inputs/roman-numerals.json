@@ -1,0 +1,28 @@
+{
+  "objective": "Implement a function roman_to_int(s) that converts a Roman numeral string to its integer value.",
+  "acceptance_criteria": "Handle the symbols I,V,X,L,C,D,M and subtractive combinations (IV=4, IX=9, XL=40, XC=90, CD=400, CM=900). Return an int. Assume the input is a valid Roman numeral.",
+  "context": "Signature: def roman_to_int(s: str) -> int. Tests will call roman_to_int directly; do not read stdin or print.",
+  "planner_workflow": "loop_planner",
+  "actor_workflow": "coding_actor",
+  "delegate_actor_workflow": "coding_actor",
+  "evaluator_workflow": "coding_evaluator",
+  "max_iterations": 5,
+  "max_retries": 3,
+  "max_replans": 1,
+  "token_budget": 400000,
+  "enable_human": false,
+  "escalate_on_limit": false,
+  "llm_provider": "anthropic",
+  "llm_model": "claude-opus-4-7",
+  "extension_params": {
+    "timeout_seconds": 10,
+    "cases": [
+      {"name": "III", "expr": "roman_to_int('III') == 3"},
+      {"name": "IV", "expr": "roman_to_int('IV') == 4"},
+      {"name": "IX", "expr": "roman_to_int('IX') == 9"},
+      {"name": "LVIII", "expr": "roman_to_int('LVIII') == 58"},
+      {"name": "MCMXCIV", "expr": "roman_to_int('MCMXCIV') == 1994"},
+      {"name": "MMXXIV", "expr": "roman_to_int('MMXXIV') == 2024"}
+    ]
+  }
+}

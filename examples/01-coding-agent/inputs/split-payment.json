@@ -1,0 +1,25 @@
+{
+  "objective": "Implement a function allocate_cents(total_cents, weights) that splits an integer amount of cents across recipients proportionally to their weights, without losing or inventing a single cent.",
+  "acceptance_criteria": "The returned list has one integer share per weight, the shares sum EXACTLY to total_cents, and rounding uses the largest-remainder method: each share starts at floor(total_cents * weight / sum(weights)), then the leftover cents are given one each to the shares with the largest fractional remainders, ties broken by lower index. A weight of 0 must receive 0 (unless it gains a tie-broken remainder cent only when all weights are 0 is NOT required — assume sum(weights) > 0). total_cents may be 0.",
+  "context": "Signature: def allocate_cents(total_cents: int, weights: list[int]) -> list[int]. Real payment-splitting bug class: naive rounding loses cents. Tests call allocate_cents directly; do not read stdin or print.",
+  "effort": "medium",
+  "actor_workflow": "coding_actor",
+  "evaluator_workflow": "coding_evaluator",
+  "max_iterations": 6,
+  "token_budget": 400000,
+  "llm_provider": "anthropic",
+  "llm_model": "claude-opus-4-7",
+  "extension_params": {
+    "timeout_seconds": 10,
+    "cases": [
+      {"name": "even split with remainder to lowest index", "expr": "allocate_cents(100, [1, 1, 1]) == [34, 33, 33]"},
+      {"name": "two remainder cents", "expr": "allocate_cents(101, [1, 1, 1]) == [34, 34, 33]"},
+      {"name": "single recipient", "expr": "allocate_cents(100, [1]) == [100]"},
+      {"name": "zero total", "expr": "allocate_cents(0, [3, 7]) == [0, 0]"},
+      {"name": "largest remainder wins", "expr": "allocate_cents(7, [3, 1]) == [5, 2]"},
+      {"name": "zero weight gets zero", "expr": "allocate_cents(10, [0, 1]) == [0, 10]"},
+      {"name": "conservation property", "expr": "sum(allocate_cents(999, [7, 3, 9])) == 999"},
+      {"name": "uneven weights conservation", "expr": "sum(allocate_cents(12345, [13, 1, 7, 100])) == 12345"}
+    ]
+  }
+}
