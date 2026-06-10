@@ -92,6 +92,8 @@ Terminal statuses: `succeeded`, `stopped_no_progress`, `stopped_budget`, `stoppe
 Each extension point is a Conductor sub-workflow resolved **by name at runtime**. Register a
 workflow with the matching contract, pass its name as input — the engine is unchanged:
 
+- **Pre-planner** (`pre_planner_workflow`, optional) — *code that shapes the planner*: runs before
+  every plan/replan → out: `{ context, plan_hints, tokens }`, merged into what the planner sees
 - **Planner** (`planner_workflow`) — in: objective, criteria, feedback, history → out: `{ plan, tokens }`
 - **Actor** (`actor_workflow`) — in: objective, plan, feedback, iteration → out: `{ result, summary, tokens }`
 - **Evaluator** (`evaluator_workflow`) — in: objective, criteria, result → out: `{ passed, score, feedback, tokens }`
@@ -100,6 +102,44 @@ A custom extension that fails or returns garbage is treated as an infra failure 
 retries — it degrades the run, it doesn't kill it. Set `enable_human: true` to escalate to a
 `HUMAN` task instead of stopping; resume with `conductor task signal`. Full contracts (every
 field, plus `extension_params` passthrough) are in the [design notes](docs/design.md).
+
+## Or write the whole loop in Python — the `loop` SDK
+
+A loop is an agentic program: *loop to resolve a dispute, loop to review code, loop to onboard a
+customer.* With the [`loop` SDK](sdk/README.md), one Python file is the whole loop — plain
+functions become Conductor workers, the SDK generates the contract sub-workflows, and the durable
+engine still owns control:
+
+```python
+from loop import Loop
+
+dispute = Loop(name="credit_card_dispute",
+               objective="Resolve the dispute in extension_params.case_id per policy.",
+               acceptance_criteria="The ledger reflects a policy-correct decision.",
+               llm_provider="anthropic", llm_model="claude-opus-4-7")
+
+@dispute.pre_planner                 # code that runs BEFORE the LLM planner and shapes it
+def gather_case(extension_params=None):
+    return {"context": case_facts(extension_params), "plan_hints": POLICY}
+
+@dispute.actor                       # the work — a Conductor worker
+def resolve(plan="", feedback="", extension_params=None):
+    return {"result": apply_policy_and_update_ledger(extension_params)}
+
+@dispute.evaluator                   # judge the LEDGER, not the model's claim
+def verify(extension_params=None):
+    return {"passed": ledger_is_correct(extension_params), "feedback": "..."}
+
+run = dispute.execute(extension_params={"case_id": "D-1001"})
+run.watch()                          # live decision log until the loop terminates
+```
+
+```bash
+pip install -e sdk/ && python sdk/examples/credit_card.py
+```
+
+Runnable example: [`sdk/examples/credit_card.py`](sdk/examples/credit_card.py) · SDK docs:
+[`sdk/README.md`](sdk/README.md).
 
 ## Production examples ([`examples/`](examples/README.md))
 

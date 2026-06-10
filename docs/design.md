@@ -120,8 +120,22 @@ flowchart TD
 | `loop_evaluator` | Default Evaluator: independent LLM judge | `evaluator_workflow` |
 | `loop_demo_text_evaluator` | Evidence-based Evaluator: deterministic checks gate an LLM judge | `evaluator_workflow` |
 | `loop_failure_handler` | `failureWorkflow`: records an engine-level failure for triage (extend with notification tasks) | — |
+| *(none by default)* | Pre-planner: code that runs before plan/replan and shapes the planner's context | `pre_planner_workflow` |
+
+The [`loop` SDK](../sdk/README.md) generates pre-planner/planner/actor/evaluator
+sub-workflows from decorated Python functions (each one a SIMPLE worker task wrapped in a
+contract workflow named `{loop}_{role}`), so a loop can be authored as a single Python file.
 
 ## Extension-point I/O contracts (full)
+
+**Pre-planner** (optional, off unless `pre_planner_workflow` is set) — in: `objective,
+acceptance_criteria, context, effort, llm_provider, llm_model, extension_params`; out:
+`{ context, plan_hints, tokens }`. Runs once before the initial plan; its output is merged
+into the planner's context (`plan_hints` appended under a `PLAN HINTS` header) and stored
+in the `planner_context` variable, which **replans also read** — so code-derived facts and
+constraints shape every strategy the planner ever produces. A failed pre-planner degrades
+to the original input context (guarded, like every other extension point); its tokens are
+counted into `spent_tokens` with the initial plan.
 
 **Planner** — in: `objective, acceptance_criteria, context, feedback, history, effort, llm_provider, llm_model, extension_params`; out: `{ plan, tokens }`
 

@@ -82,6 +82,15 @@ test('delegate defaults to the resolved actor, not the built-in', () => {
   assert.equal(c.delegate_actor_workflow, 'my_actor');
 });
 
+test('pre-planner is off by default and on only when a workflow name is given', () => {
+  const off = resolveConfig({ ...REQUIRED });
+  assert.equal(off.pre_planner_workflow, '');
+  assert.equal(off.has_pre_planner, 'false');
+  const on = resolveConfig({ ...REQUIRED, pre_planner_workflow: 'my_pre_planner' });
+  assert.equal(on.pre_planner_workflow, 'my_pre_planner');
+  assert.equal(on.has_pre_planner, 'true');
+});
+
 test('boolean flags accept string forms', () => {
   const c = resolveConfig({ ...REQUIRED, enable_human: 'true', escalate_on_limit: 'false' });
   assert.equal(c.enable_human, true);

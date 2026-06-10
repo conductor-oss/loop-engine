@@ -13,6 +13,7 @@
     "context",
     "effort",
     "planner_workflow",
+    "pre_planner_workflow",
     "actor_workflow",
     "delegate_actor_workflow",
     "evaluator_workflow",
@@ -31,6 +32,8 @@
     "status": "running",
     "feedback": "",
     "plan": "",
+    "planner_context": "",
+    "pre_plan_tokens": 0,
     "history": [],
     "best_result": null,
     "best_score": 0,
@@ -56,6 +59,7 @@
         "llm_model": "${workflow.input.llm_model}",
         "evaluator_llm_model": "${workflow.input.evaluator_llm_model}",
         "planner_workflow": "${workflow.input.planner_workflow}",
+        "pre_planner_workflow": "${workflow.input.pre_planner_workflow}",
         "actor_workflow": "${workflow.input.actor_workflow}",
         "delegate_actor_workflow": "${workflow.input.delegate_actor_workflow}",
         "evaluator_workflow": "${workflow.input.evaluator_workflow}",
@@ -65,7 +69,7 @@
         "token_budget": "${workflow.input.token_budget}",
         "enable_human": "${workflow.input.enable_human}",
         "escalate_on_limit": "${workflow.input.escalate_on_limit}",
-        "expression": "(function(){ function resolveConfig($) { function num(v, d) { if (v === null || v === undefined || v === '') { return d; } var n = Number(v); return isNaN(n) ? d : n; } function clamp(n, lo, hi) { if (n < lo) { return lo; } if (n > hi) { return hi; } return n; } function flag(v, d) { if (v === true || v === 'true') { return true; } if (v === false || v === 'false') { return false; } return d; } function str(v, d) { return (typeof v === 'string' && v.length > 0) ? v : d; } var PRESETS = { 'default': { max_iterations: 6,  max_retries: 3, max_replans: 1, token_budget: 200000 }, 'medium':  { max_iterations: 12, max_retries: 4, max_replans: 2, token_budget: 500000 }, 'high':    { max_iterations: 24, max_retries: 5, max_replans: 3, token_budget: 2000000 } }; var effort = ('' + ($.effort || 'default')).toLowerCase().trim(); if (effort === 'med') { effort = 'medium'; } if (!PRESETS[effort]) { effort = 'default'; } var p = PRESETS[effort]; var missing = []; if (!str($.objective, '')) { missing.push('objective'); } if (!str($.acceptance_criteria, '')) { missing.push('acceptance_criteria'); } if (!str($.llm_provider, '')) { missing.push('llm_provider'); } if (!str($.llm_model, '')) { missing.push('llm_model'); } var llmModel = str($.llm_model, ''); var actor = str($.actor_workflow, 'loop_actor'); return { valid: missing.length === 0 ? 'true' : 'false', error: missing.length === 0 ? '' : ('loop_engine: missing required input(s): ' + missing.join(', ') + '.'), effort: effort, max_iterations: clamp(num($.max_iterations, p.max_iterations), 1, 200), max_retries: clamp(num($.max_retries, p.max_retries), 1, 50), max_replans: clamp(num($.max_replans, p.max_replans), 0, 20), token_budget: clamp(num($.token_budget, p.token_budget), 0, 50000000), enable_human: flag($.enable_human, false), escalate_on_limit: flag($.escalate_on_limit, false), planner_workflow: str($.planner_workflow, 'loop_planner'), actor_workflow: actor, delegate_actor_workflow: str($.delegate_actor_workflow, actor), evaluator_workflow: str($.evaluator_workflow, 'loop_evaluator'), evaluator_llm_model: str($.evaluator_llm_model, llmModel) }; } return resolveConfig($); })();"
+        "expression": "(function(){ function resolveConfig($) { function num(v, d) { if (v === null || v === undefined || v === '') { return d; } var n = Number(v); return isNaN(n) ? d : n; } function clamp(n, lo, hi) { if (n < lo) { return lo; } if (n > hi) { return hi; } return n; } function flag(v, d) { if (v === true || v === 'true') { return true; } if (v === false || v === 'false') { return false; } return d; } function str(v, d) { return (typeof v === 'string' && v.length > 0) ? v : d; } var PRESETS = { 'default': { max_iterations: 6,  max_retries: 3, max_replans: 1, token_budget: 200000 }, 'medium':  { max_iterations: 12, max_retries: 4, max_replans: 2, token_budget: 500000 }, 'high':    { max_iterations: 24, max_retries: 5, max_replans: 3, token_budget: 2000000 } }; var effort = ('' + ($.effort || 'default')).toLowerCase().trim(); if (effort === 'med') { effort = 'medium'; } if (!PRESETS[effort]) { effort = 'default'; } var p = PRESETS[effort]; var missing = []; if (!str($.objective, '')) { missing.push('objective'); } if (!str($.acceptance_criteria, '')) { missing.push('acceptance_criteria'); } if (!str($.llm_provider, '')) { missing.push('llm_provider'); } if (!str($.llm_model, '')) { missing.push('llm_model'); } var llmModel = str($.llm_model, ''); var actor = str($.actor_workflow, 'loop_actor'); var prePlanner = str($.pre_planner_workflow, ''); return { valid: missing.length === 0 ? 'true' : 'false', error: missing.length === 0 ? '' : ('loop_engine: missing required input(s): ' + missing.join(', ') + '.'), effort: effort, max_iterations: clamp(num($.max_iterations, p.max_iterations), 1, 200), max_retries: clamp(num($.max_retries, p.max_retries), 1, 50), max_replans: clamp(num($.max_replans, p.max_replans), 0, 20), token_budget: clamp(num($.token_budget, p.token_budget), 0, 50000000), enable_human: flag($.enable_human, false), escalate_on_limit: flag($.escalate_on_limit, false), planner_workflow: str($.planner_workflow, 'loop_planner'), pre_planner_workflow: prePlanner, has_pre_planner: prePlanner.length > 0 ? 'true' : 'false', actor_workflow: actor, delegate_actor_workflow: str($.delegate_actor_workflow, actor), evaluator_workflow: str($.evaluator_workflow, 'loop_evaluator'), evaluator_llm_model: str($.evaluator_llm_model, llmModel) }; } return resolveConfig($); })();"
       }
     },
     {
@@ -93,6 +97,70 @@
       "defaultCase": []
     },
     {
+      "name": "seed_planner_context",
+      "taskReferenceName": "seed_planner_context",
+      "type": "SET_VARIABLE",
+      "inputParameters": {
+        "planner_context": "${workflow.input.context}"
+      }
+    },
+    {
+      "name": "pre_plan_gate",
+      "taskReferenceName": "pre_plan_gate",
+      "type": "SWITCH",
+      "evaluatorType": "value-param",
+      "expression": "enabled",
+      "inputParameters": {
+        "enabled": "${resolve_config.output.result.has_pre_planner}"
+      },
+      "decisionCases": {
+        "true": [
+          {
+            "name": "pre_plan",
+            "taskReferenceName": "pre_plan",
+            "type": "SUB_WORKFLOW",
+            "optional": true,
+            "subWorkflowParam": {
+              "name": "${resolve_config.output.result.pre_planner_workflow}",
+              "version": 1
+            },
+            "inputParameters": {
+              "objective": "${workflow.input.objective}",
+              "acceptance_criteria": "${workflow.input.acceptance_criteria}",
+              "context": "${workflow.input.context}",
+              "effort": "${resolve_config.output.result.effort}",
+              "llm_provider": "${workflow.input.llm_provider}",
+              "llm_model": "${workflow.input.llm_model}",
+              "extension_params": "${workflow.input.extension_params}"
+            }
+          },
+          {
+            "name": "pre_plan_guard",
+            "taskReferenceName": "pre_plan_guard",
+            "type": "INLINE",
+            "inputParameters": {
+              "evaluatorType": "graaljs",
+              "base_context": "${workflow.input.context}",
+              "pp_context": "${pre_plan.output.context}",
+              "pp_hints": "${pre_plan.output.plan_hints}",
+              "pp_tokens": "${pre_plan.output.tokens}",
+              "expression": "(function(){ function s(v){ return (v===null||v===undefined)?'':(''+v); } var ctx=s($.pp_context).length>0?s($.pp_context):s($.base_context); var h=s($.pp_hints); if(h.length>0){ ctx=ctx+(ctx.length>0?'\\n\\n':'')+'PLAN HINTS (from pre-planner):\\n'+h; } var t=Number($.pp_tokens); if(isNaN(t))t=0; return { context: ctx, tokens: t }; })();"
+            }
+          },
+          {
+            "name": "set_pre_plan",
+            "taskReferenceName": "set_pre_plan",
+            "type": "SET_VARIABLE",
+            "inputParameters": {
+              "planner_context": "${pre_plan_guard.output.result.context}",
+              "pre_plan_tokens": "${pre_plan_guard.output.result.tokens}"
+            }
+          }
+        ]
+      },
+      "defaultCase": []
+    },
+    {
       "name": "plan",
       "taskReferenceName": "plan",
       "type": "SUB_WORKFLOW",
@@ -104,7 +172,7 @@
       "inputParameters": {
         "objective": "${workflow.input.objective}",
         "acceptance_criteria": "${workflow.input.acceptance_criteria}",
-        "context": "${workflow.input.context}",
+        "context": "${workflow.variables.planner_context}",
         "feedback": "",
         "history": [],
         "effort": "${resolve_config.output.result.effort}",
@@ -121,7 +189,8 @@
         "evaluatorType": "graaljs",
         "plan": "${plan.output.plan}",
         "tokens": "${plan.output.tokens}",
-        "expression": "(function(){ var p=$.plan; var ok=!(p===null||p===undefined); var t=Number($.tokens); if(isNaN(t))t=0; return { plan: ok? (''+p) : 'No plan available (planner unavailable); work directly from the OBJECTIVE and ACCEPTANCE CRITERIA.', tokens: t }; })();"
+        "pre_tokens": "${workflow.variables.pre_plan_tokens}",
+        "expression": "(function(){ var p=$.plan; var ok=!(p===null||p===undefined); var t=Number($.tokens); if(isNaN(t))t=0; var pt=Number($.pre_tokens); if(isNaN(pt))pt=0; return { plan: ok? (''+p) : 'No plan available (planner unavailable); work directly from the OBJECTIVE and ACCEPTANCE CRITERIA.', tokens: t+pt }; })();"
       }
     },
     {
@@ -325,7 +394,7 @@
                 "inputParameters": {
                   "objective": "${workflow.input.objective}",
                   "acceptance_criteria": "${workflow.input.acceptance_criteria}",
-                  "context": "${workflow.input.context}",
+                  "context": "${workflow.variables.planner_context}",
                   "feedback": "${workflow.variables.feedback}",
                   "history": "${workflow.variables.history}",
                   "effort": "${resolve_config.output.result.effort}",

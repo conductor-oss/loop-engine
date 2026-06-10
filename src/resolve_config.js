@@ -46,6 +46,7 @@ function resolveConfig($) {
 
   var llmModel = str($.llm_model, '');
   var actor = str($.actor_workflow, 'loop_actor');
+  var prePlanner = str($.pre_planner_workflow, '');
   return {
     valid: missing.length === 0 ? 'true' : 'false',
     error: missing.length === 0 ? '' : ('loop_engine: missing required input(s): ' + missing.join(', ') + '.'),
@@ -57,6 +58,8 @@ function resolveConfig($) {
     enable_human: flag($.enable_human, false),
     escalate_on_limit: flag($.escalate_on_limit, false),
     planner_workflow: str($.planner_workflow, 'loop_planner'),
+    pre_planner_workflow: prePlanner,
+    has_pre_planner: prePlanner.length > 0 ? 'true' : 'false',
     actor_workflow: actor,
     delegate_actor_workflow: str($.delegate_actor_workflow, actor),
     evaluator_workflow: str($.evaluator_workflow, 'loop_evaluator'),
