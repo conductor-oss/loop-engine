@@ -1,11 +1,12 @@
-# conductor-loop
+# Loop Engine
 
 **Durable, bounded, self-correcting loops for AI agents — built on open-source
 [Conductor](https://github.com/conductor-oss/conductor).**
 
 Running an agent once and hoping is not a system. The reliable pattern is a **loop**: act,
 evaluate against real evidence, feed back, retry — until the work passes or a guardrail says
-stop. Today that loop is usually a human. This repo turns it into software.
+stop. Today that loop is usually a human babysitting a chat window. Loop Engine turns it into
+software.
 
 ```
 Goal
@@ -44,19 +45,19 @@ deterministic in the engine.
 
 ## Quickstart
 
-You need a running Conductor server with an LLM integration configured
-(`conductor server start` locally, or set `CONDUCTOR_SERVER_URL`).
-
 ```bash
-# 1. Register the workflows (idempotent)
-for f in workflows/*.json; do
-  conductor workflow create "$f" 2>/dev/null || conductor workflow update "$f"
-done
+# 1. Export an LLM key — the server picks it up at startup
+export ANTHROPIC_API_KEY=sk-ant-...     # demos default to Anthropic
+# export OPENAI_API_KEY=sk-...          # or OpenAI: set llm_provider/llm_model in the input file
 
-# 2. Run: objective + acceptance criteria + model; everything else defaults
+# 2. Start a Conductor server (needs Java 21+; skip if you have one)
+conductor server start                  # or: export CONDUCTOR_SERVER_URL=https://your-server/api
+
+# 3. Register the workflows + sanity-check the setup (idempotent)
+./quickstart.sh
+
+# 4. Run your first loop, then watch every iteration and decision
 conductor workflow start -w loop_engine -f inputs/demo-minimal.json
-
-# 3. Watch it loop
 conductor workflow get-execution <workflowId>
 ```
 
@@ -97,7 +98,8 @@ workflow with the matching contract, pass its name as input — the engine is un
 
 A custom extension that fails or returns garbage is treated as an infra failure with bounded
 retries — it degrades the run, it doesn't kill it. Set `enable_human: true` to escalate to a
-`HUMAN` task instead of stopping; resume with `conductor task signal`.
+`HUMAN` task instead of stopping; resume with `conductor task signal`. Full contracts (every
+field, plus `extension_params` passthrough) are in the [design notes](docs/design.md).
 
 ## Production examples ([`examples/`](examples/README.md))
 
@@ -143,3 +145,8 @@ Conductor is the *runtime*. Authored with the
 node --test 'tests/*.test.cjs'                          # policy, config, guards, JSON sync
 (cd examples/workers && python3 -m unittest discover)   # the example workers
 ```
+
+---
+
+Loop Engine is the *pattern*. **[Conductor](https://github.com/conductor-oss/conductor)** is the
+*runtime* — if durable agent loops are your problem, that's the repo to star.

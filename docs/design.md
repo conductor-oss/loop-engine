@@ -110,6 +110,46 @@ flowchart TD
     finalize --> done([status, result, score, decision_log, tokens_spent])
 ```
 
+## The workflows (system)
+
+| Workflow | Role | Extension point input |
+|---|---|---|
+| `loop_engine` | The engineered outer loop / control plane | — |
+| `loop_planner` | Default Planner: produces/revises strategy | `planner_workflow` |
+| `loop_actor` | Default Actor: produces one attempt | `actor_workflow`, `delegate_actor_workflow` |
+| `loop_evaluator` | Default Evaluator: independent LLM judge | `evaluator_workflow` |
+| `loop_demo_text_evaluator` | Evidence-based Evaluator: deterministic checks gate an LLM judge | `evaluator_workflow` |
+| `loop_failure_handler` | `failureWorkflow`: records an engine-level failure for triage (extend with notification tasks) | — |
+
+## Extension-point I/O contracts (full)
+
+**Planner** — in: `objective, acceptance_criteria, context, feedback, history, effort, llm_provider, llm_model, extension_params`; out: `{ plan, tokens }`
+
+**Actor** — in: `objective, acceptance_criteria, plan, context, feedback, iteration, history, effort, llm_provider, llm_model, extension_params`; out: `{ result, summary, tokens }`
+
+**Evaluator** — in: `objective, acceptance_criteria, result, summary, context, effort, llm_provider, llm_model, extension_params`; out: `{ passed, score, feedback, recommend, checks, tokens }`
+
+The engine treats a sub-workflow that fails — or returns an all-null verdict / no `result` — as an
+**infra failure** (bounded retries, see decision policy), so a buggy custom extension degrades
+gracefully instead of killing the run.
+
+`extension_params` is a free-form object passed through to all three, so a custom extension can
+read whatever config it needs (the text evaluator reads `max_chars`, `required_keywords`,
+`banned_words` from it).
+
+## Extending the loop
+
+- **New actor** (e.g. an MCP/ReAct agent, a coding agent): register a workflow honoring the Actor
+  contract, pass `actor_workflow: "your_actor"`. See the Conductor skill's `ai-agent-loop` example
+  for an MCP/ReAct actor body.
+- **New evaluator** (e.g. run a test suite, call a policy API, compile code): register a workflow
+  honoring the Evaluator contract. Prefer deterministic checks; gate the LLM judge with them.
+- **Human-in-the-loop**: set `enable_human: true`. On escalation the loop pauses at a `HUMAN`
+  task; resume with `conductor task signal` providing `{ "status": "running", "feedback": "..." }`
+  to continue (with new guidance) or `{ "status": "stopped" }` to halt.
+- **Delegate**: have an evaluator return `recommend: "delegate"`; the loop switches `active_actor`
+  to `delegate_actor_workflow` for the remaining iterations.
+
 ## Failure handling (the loop survives its own infrastructure)
 
 The `plan`, `act`, `evaluate`, and `replan` sub-workflow calls are all **optional + guarded**:
