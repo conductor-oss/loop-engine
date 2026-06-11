@@ -54,6 +54,12 @@ LLM actor, LLM judge) — so the smallest loop is just a `Loop(...)` plus `execu
 | `@loop.actor` | once per iteration | `{result, summary?, tokens?}` or any value |
 | `@loop.evaluator` | judges each attempt | `{passed, score?, feedback?, checks?}` or a bool |
 
+When the work itself is an LLM call, skip the worker entirely:
+`loop.llm_actor(system_prompt=..., temperature=0.2, max_tokens=2000)` makes the actor a
+prompted LLM — the SDK generates the `LLM_CHAT_COMPLETE` sub-workflow, and the objective,
+plan, and evaluator feedback are templated into the user message each iteration (see
+`loop-examples/coding_agent.py`).
+
 Functions declare only the contract inputs they want, by name: `objective`,
 `acceptance_criteria`, `context`, `plan`, `feedback`, `iteration`, `history`, `effort`,
 `llm_provider`, `llm_model`, `extension_params` (+ `result`, `summary` for evaluators).

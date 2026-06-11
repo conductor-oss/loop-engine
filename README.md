@@ -141,21 +141,19 @@ pip install -e sdk/ && python sdk/examples/credit_card.py
 Runnable example: [`sdk/examples/credit_card.py`](sdk/examples/credit_card.py) · SDK docs:
 [`sdk/README.md`](sdk/README.md).
 
-## Production examples ([`examples/`](examples/README.md))
+## Production examples ([`loop-examples/`](loop-examples/README.md))
 
-Three real loops that reuse the engine unchanged — each supplies only an actor, an evaluator,
-and Python workers for the real work:
+Three real loops, **each a single Python file** on the SDK, all reusing the engine unchanged:
 
 | Example | Evidence the loop closes on |
 |---|---|
-| **Coding agent** — LLM writes Python, a worker executes it | real test pass/fail (sandboxed subprocess) |
-| **Data-quality pipeline** — clean → check workers | deterministic data contract |
-| **Refund/support agent** — lookup → refund → verify workers | the actual refund ledger, not the model's claim |
+| **Coding agent** (`coding_agent.py`) — a prompted LLM writes Python | real test pass/fail (sandboxed subprocess) |
+| **Data-quality pipeline** (`data_quality.py`) — code cleans, a contract gates | deterministic data contract |
+| **Refund/support agent** (`refund_support.py`) — pre-planner facts, policy actor | the actual refund ledger, not the model's claim |
 
 ```bash
-cd examples && ./register.sh
-(cd workers && python run_workers.py) &
-conductor workflow start -w loop_engine -f 01-coding-agent/inputs/roman-numerals.json
+cd loop-examples && pip install -e ../sdk
+python coding_agent.py roman
 ```
 
 ## Built on Conductor
@@ -183,7 +181,8 @@ Conductor is the *runtime*. Authored with the
 
 ```bash
 node --test 'tests/*.test.cjs'                          # policy, config, guards, JSON sync
-(cd examples/workers && python3 -m unittest discover)   # the example workers
+(cd loop-examples && python3 -m unittest discover)      # the example loops' role logic
+(cd sdk && PYTHONPATH=. python3 -m unittest discover -s tests)   # the loop SDK
 ```
 
 ---

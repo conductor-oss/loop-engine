@@ -4,8 +4,11 @@ __pycache__/
 .venv/
 venv/
 
-# Worker runtime state (simulated backend store for the refund example)
-examples/workers/.state/
+# Runtime state (simulated backend store for the refund example)
+loop-examples/.state/
+
+# Python packaging
+sdk/*.egg-info/
 
 # macOS
 .DS_Store

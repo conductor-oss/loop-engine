@@ -1,7 +1,7 @@
-"""Tests for the data-quality workers (clean_dataset + data_quality_check)."""
+"""Tests for the data-quality loop's roles (clean_dataset + data_quality_check)."""
 import unittest
 
-from conductor_loop_workers.data_quality import clean_dataset, data_quality_check
+from data_quality import clean_dataset, data_quality_check
 
 MESSY = [
     {"id": 1, "name": "  Ada  ", "email": "  ADA@Example.com ", "age": "36"},

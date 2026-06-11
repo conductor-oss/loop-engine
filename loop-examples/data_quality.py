@@ -1,20 +1,23 @@
-"""Data-quality pipeline workers (the actor's "tool" + the deterministic evaluator).
+#!/usr/bin/env python3
+"""data_quality.py — Python code does the ETL; a deterministic contract is the gate.
 
-A loop where Python code does the real work: ``clean_dataset`` transforms a messy
-dataset (escalating its strategy as the evaluator reports violations) and
+A loop where both roles are code: ``clean_dataset`` transforms a messy dataset
+(escalating its strategy once the evaluator has rejected a pass) and
 ``data_quality_check`` gates on a deterministic data contract. The agent is "done"
 only when the data actually satisfies the contract — measured, not asserted.
 
-Tasks:
-  clean_dataset(dataset, iteration, feedback) -> {records, applied}
-  data_quality_check(records, contract)       -> {passed, score, violations, feedback}
+Both functions read THE SAME operator-supplied contract (extension_params.contract):
+field names and bounds are configuration, not code, so tuning the contract (say
+age_max 65, or renamed columns) re-targets the cleaner and the gate together.
+
+Run (server + loop_engine registered, see repo quickstart):
+    pip install -e ../sdk
+    python data_quality.py
 """
-import logging
+import json
 import re
 
-from conductor.client.worker.worker_task import worker_task
-
-log = logging.getLogger("conductor_loop.data_quality")
+from loop import Loop
 
 _EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 
@@ -26,9 +29,7 @@ def _to_int(value):
         return None
 
 
-@worker_task(task_definition_name="clean_dataset", thread_count=2)
-def clean_dataset(dataset: object = None, iteration: int = 0,
-                  feedback: str = "", contract: object = None) -> dict:
+def clean_dataset(dataset=None, iteration=0, feedback="", contract=None):
     """Normalize records toward THE SAME contract the evaluator enforces; escalate to
     dropping irreparable rows once a pass has already failed the contract.
 
@@ -94,14 +95,11 @@ def clean_dataset(dataset: object = None, iteration: int = 0,
             seen_ids.add(rid)
         cleaned.append(rec)
 
-    log.info("clean_dataset iter=%s in=%d out=%d aggressive=%s out_of_range_ages=%d",
-             iteration, len(dataset), len(cleaned), aggressive, out_of_range_ages)
     return {"records": cleaned, "applied": applied, "out_of_range_ages": out_of_range_ages,
             "in_count": len(dataset), "out_count": len(cleaned)}
 
 
-@worker_task(task_definition_name="data_quality_check", thread_count=2)
-def data_quality_check(records: object = None, contract: object = None) -> dict:
+def data_quality_check(records=None, contract=None):
     """Evaluate a dataset against a deterministic data contract. Evidence-based gate."""
     records = records or []
     contract = contract or {}
@@ -153,6 +151,66 @@ def data_quality_check(records: object = None, contract: object = None) -> dict:
     feedback = ("All data-quality rules passed (%d rows)." % len(records)
                 if passed else "Violations: " + "; ".join(violations) + ".")
 
-    log.info("data_quality_check rows=%d passed=%s score=%.2f", len(records), passed, score)
     return {"passed": passed, "score": score, "violations": violations,
             "row_count": len(records), "feedback": feedback}
+
+
+# --- the loop -------------------------------------------------------------------
+quality = Loop(
+    name="data_quality",
+    objective="Clean the customer dataset so it satisfies the data-quality contract.",
+    acceptance_criteria="Every row must have non-null id, name, email and age; emails "
+                        "must be validly formatted; age must be an integer in [0,120]; "
+                        "there must be no duplicate ids.",
+    llm_provider="anthropic",
+    llm_model="claude-opus-4-7",
+    max_iterations=4,
+    max_replans=0,
+    token_budget=400000,
+)
+
+
+@quality.actor
+def clean(iteration=0, feedback="", extension_params=None):
+    p = extension_params or {}
+    out = clean_dataset(dataset=p.get("dataset"), iteration=iteration,
+                        feedback=feedback, contract=p.get("contract"))
+    return {"result": out["records"],
+            "summary": (f"cleaned {out['in_count']} -> {out['out_count']} rows; "
+                        f"applied: {', '.join(out['applied'])}")}
+
+
+@quality.evaluator
+def check(result=None, extension_params=None):
+    out = data_quality_check(records=result,
+                             contract=(extension_params or {}).get("contract"))
+    return {"passed": out["passed"], "score": out["score"], "feedback": out["feedback"],
+            "checks": {"violations": out["violations"], "row_count": out["row_count"]}}
+
+
+MESSY_CUSTOMERS = [
+    {"id": 1, "name": " Alice ", "email": "ALICE@EXAMPLE.COM", "age": "30"},
+    {"id": 1, "name": "Alice", "email": "alice@example.com", "age": "30"},
+    {"id": 2, "name": "", "email": "not-an-email", "age": "45"},
+    {"id": 3, "name": "Bob", "email": "bob@example.com", "age": "abc"},
+    {"id": 4, "name": "Cy", "email": "cy@example.com", "age": "200"},
+    {"id": 5, "name": "Dee", "email": "dee@example.com", "age": "27"},
+]
+
+CONTRACT = {
+    "required_fields": ["id", "name", "email", "age"],
+    "unique_field": "id",
+    "email_field": "email",
+    "age_field": "age",
+    "age_min": 0,
+    "age_max": 120,
+}
+
+
+if __name__ == "__main__":
+    run = quality.execute(extension_params={"dataset": MESSY_CUSTOMERS,
+                                            "contract": CONTRACT})
+    print(f"loop started: {run.id}")
+    out = run.watch()  # expect: light clean -> violations -> aggressive clean -> pass
+    print(json.dumps(out.get("result"), indent=2))
+    quality.stop_workers()

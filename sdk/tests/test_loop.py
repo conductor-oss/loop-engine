@@ -107,6 +107,31 @@ class WrapperWorkflowTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             loop.actor(lambda **kw: "y")
 
+    def test_llm_actor_generates_chat_complete_workflow(self):
+        loop = make_loop()
+        loop.llm_actor(system_prompt="Output ONLY Python.", temperature=0.1,
+                       max_tokens=2500)
+        wf = loop.llm_actor_workflow()
+        self.assertEqual(wf["name"], "cc_dispute_actor")
+        gen = wf["tasks"][0]
+        self.assertEqual(gen["type"], "LLM_CHAT_COMPLETE")
+        self.assertEqual(gen["inputParameters"]["maxTokens"], 2500)
+        self.assertEqual(gen["inputParameters"]["messages"][0]["message"],
+                         "Output ONLY Python.")
+        self.assertIn("${workflow.input.feedback}",
+                      gen["inputParameters"]["messages"][1]["message"])
+        self.assertEqual(wf["outputParameters"]["tokens"], "${generate.output.tokenUsed}")
+
+    def test_llm_actor_conflicts_with_code_actor(self):
+        loop = make_loop()
+        loop.llm_actor(system_prompt="s")
+        with self.assertRaises(ValueError):
+            loop.actor(lambda **kw: "x")
+        loop2 = make_loop()
+        loop2.actor(lambda **kw: "x")
+        with self.assertRaises(ValueError):
+            loop2.llm_actor(system_prompt="s")
+
 
 class ExecuteTests(unittest.TestCase):
     def test_engine_input_wires_defined_roles_only(self):
@@ -122,6 +147,16 @@ class ExecuteTests(unittest.TestCase):
         self.assertEqual(inp["max_iterations"], 4)
         self.assertEqual(inp["enable_human"], True)
         self.assertEqual(inp["extension_params"], {"case_id": "D-1"})
+
+    def test_llm_actor_wired_into_engine_input_and_registration(self):
+        loop = make_loop()
+        loop.llm_actor(system_prompt="s")
+        loop.evaluator(lambda **kw: True)
+        inp = loop.engine_input()
+        self.assertEqual(inp["actor_workflow"], "cc_dispute_actor")
+        loop.execute(start_workers=False)
+        self.assertEqual(sorted(d["name"] for d in loop.client.registered),
+                         ["cc_dispute_actor", "cc_dispute_evaluator"])
 
     def test_execute_registers_and_starts(self):
         loop = make_loop()

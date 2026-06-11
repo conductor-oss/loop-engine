@@ -1,11 +1,10 @@
-"""Generic, sandboxed Python code runner worker.
+"""Generic, sandboxed Python code runner (the coding-agent loop's *environment*).
 
-This is the *environment* for a coding-agent loop: it executes whatever Python
-the actor (an LLM) produced against an operator-supplied test harness and reports
-DETERMINISTIC pass/fail evidence. The loop trusts what the code DOES — not what
-the model claims it did.
+Executes whatever Python the actor (an LLM) produced against an operator-supplied
+test harness and reports DETERMINISTIC pass/fail evidence. The loop trusts what the
+code DOES — not what the model claims it did. Used by ``coding_agent.py``'s evaluator.
 
-Contract (task: ``python_code_runner``)
+Contract (``run_python``)
     inputs:
         code            str    Candidate Python source (markdown fences tolerated).
         cases           list   [{"name": str, "expr": "<python boolean expression>"}]
@@ -20,7 +19,7 @@ Contract (task: ``python_code_runner``)
 
 RESULT-INTEGRITY (anti-spoofing) -- the candidate is the untrusted channel and runs
 in the same interpreter as the harness, so a naive design lets it forge a pass by
-printing the result sentinel itself. This worker closes that hole:
+printing the result sentinel itself. This runner closes that hole:
   * Results are written OUT-OF-BAND to a random temp file (not stdout), whose path +
     a per-run random NONCE live in a sidecar the driver reads and DELETES *before*
     executing the candidate — so the candidate never learns the path or the nonce.
@@ -48,9 +47,7 @@ import subprocess
 import sys
 import tempfile
 
-from conductor.client.worker.worker_task import worker_task
-
-log = logging.getLogger("conductor_loop.code_runner")
+log = logging.getLogger("loop_examples.code_runner")
 
 # Driver template. Reads a sidecar (nonce + out-of-band result path), DELETES it,
 # then execs the candidate in an isolated namespace and writes nonce'd results to
@@ -133,9 +130,7 @@ def _build_driver(cases: list) -> str:
     return _DRIVER.replace("{TEST_LINES}", test_block)
 
 
-@worker_task(task_definition_name="python_code_runner", thread_count=2)
-def python_code_runner(code: str = "", cases: object = None,
-                       timeout_seconds: int = 15) -> dict:
+def run_python(code: str = "", cases: object = None, timeout_seconds: int = 15) -> dict:
     cases = cases or []
     try:
         timeout_seconds = int(timeout_seconds)

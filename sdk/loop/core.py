@@ -18,6 +18,7 @@ Your functions declare only the contract inputs they care about (by name):
 """
 import inspect
 import json
+import os
 
 from .client import Conductor
 from .run import Run
@@ -115,38 +116,48 @@ ADAPTERS = {"pre_planner": adapt_pre_planner, "planner": adapt_planner,
 
 # Workers carry the full contract signature explicitly so any conductor-python
 # parameter-mapping strategy finds them; the user's fn gets only what it declared.
+# Params are annotated `object` — a conductor-python passthrough type — because
+# unannotated params trigger its dict-to-dataclass conversion, which crashes.
 def _make_worker(role, fn):
     adapter = ADAPTERS[role]
 
     if role == "pre_planner":
-        def worker(objective=None, acceptance_criteria=None, context=None, effort=None,
-                   llm_provider=None, llm_model=None, extension_params=None):
+        def worker(objective: object = None, acceptance_criteria: object = None,
+                   context: object = None, effort: object = None,
+                   llm_provider: object = None, llm_model: object = None,
+                   extension_params: object = None):
             return adapter(_call_with_supported(fn, dict(
                 objective=objective, acceptance_criteria=acceptance_criteria,
                 context=context, effort=effort, llm_provider=llm_provider,
                 llm_model=llm_model, extension_params=extension_params)))
     elif role == "planner":
-        def worker(objective=None, acceptance_criteria=None, context=None, feedback=None,
-                   history=None, effort=None, llm_provider=None, llm_model=None,
-                   extension_params=None):
+        def worker(objective: object = None, acceptance_criteria: object = None,
+                   context: object = None, feedback: object = None,
+                   history: object = None, effort: object = None,
+                   llm_provider: object = None, llm_model: object = None,
+                   extension_params: object = None):
             return adapter(_call_with_supported(fn, dict(
                 objective=objective, acceptance_criteria=acceptance_criteria,
                 context=context, feedback=feedback, history=history, effort=effort,
                 llm_provider=llm_provider, llm_model=llm_model,
                 extension_params=extension_params)))
     elif role == "actor":
-        def worker(objective=None, acceptance_criteria=None, plan=None, context=None,
-                   feedback=None, iteration=None, history=None, effort=None,
-                   llm_provider=None, llm_model=None, extension_params=None):
+        def worker(objective: object = None, acceptance_criteria: object = None,
+                   plan: object = None, context: object = None, feedback: object = None,
+                   iteration: object = None, history: object = None,
+                   effort: object = None, llm_provider: object = None,
+                   llm_model: object = None, extension_params: object = None):
             return adapter(_call_with_supported(fn, dict(
                 objective=objective, acceptance_criteria=acceptance_criteria, plan=plan,
                 context=context, feedback=feedback, iteration=iteration, history=history,
                 effort=effort, llm_provider=llm_provider, llm_model=llm_model,
                 extension_params=extension_params)))
     else:  # evaluator
-        def worker(objective=None, acceptance_criteria=None, result=None, summary=None,
-                   context=None, effort=None, llm_provider=None, llm_model=None,
-                   extension_params=None):
+        def worker(objective: object = None, acceptance_criteria: object = None,
+                   result: object = None, summary: object = None,
+                   context: object = None, effort: object = None,
+                   llm_provider: object = None, llm_model: object = None,
+                   extension_params: object = None):
             return adapter(_call_with_supported(fn, dict(
                 objective=objective, acceptance_criteria=acceptance_criteria,
                 result=result, summary=summary, context=context, effort=effort,
@@ -180,6 +191,7 @@ class Loop:
         self.knobs = knobs
         self.client = client or Conductor(server_url=server_url)
         self._roles = {}            # role -> user fn
+        self._llm_actor = None      # config dict when the actor is a prompted LLM
         self._workers_registered = False
         self._handler = None        # conductor-python TaskHandler
 
@@ -199,8 +211,23 @@ class Loop:
     def _add_role(self, role, fn):
         if role in self._roles:
             raise ValueError(f"loop '{self.name}' already has a {role}")
+        if role == "actor" and self._llm_actor is not None:
+            raise ValueError(f"loop '{self.name}' already has an llm_actor")
         self._roles[role] = fn
         return fn
+
+    def llm_actor(self, system_prompt, temperature=0.2, max_tokens=2000):
+        """Use a prompted LLM as the actor — no worker, no custom workflow JSON.
+
+        The SDK generates an actor sub-workflow whose LLM_CHAT_COMPLETE task uses
+        your system prompt; objective, criteria, context, plan, and the evaluator's
+        feedback are templated into the user message each iteration.
+        """
+        if "actor" in self._roles or self._llm_actor is not None:
+            raise ValueError(f"loop '{self.name}' already has an actor")
+        self._llm_actor = {"system_prompt": system_prompt, "temperature": temperature,
+                           "max_tokens": max_tokens}
+        return self
 
     # -- generated artifacts ---------------------------------------------------
     def task_name(self, role):
@@ -232,6 +259,59 @@ class Loop:
             "outputParameters": {k: "${work.output.%s}" % k for k in ROLE_OUTPUTS[role]},
         }
 
+    def llm_actor_workflow(self):
+        """The generated LLM actor sub-workflow (mirrors the engine's actor contract)."""
+        a = self._llm_actor
+        inputs = ROLE_INPUTS["actor"]
+        user_message = ("TASK:\n${workflow.input.objective}\n\n"
+                        "REQUIREMENTS:\n${workflow.input.acceptance_criteria}\n\n"
+                        "CONTEXT:\n${workflow.input.context}\n\n"
+                        "STRATEGY:\n${workflow.input.plan}\n\n"
+                        "EVALUATOR FEEDBACK ON YOUR PREVIOUS ATTEMPT (empty = first attempt):\n"
+                        "${workflow.input.feedback}")
+        return {
+            "name": self.workflow_name("actor"),
+            "description": f"Generated by the loop SDK: prompted LLM as the ACTOR "
+                           f"for loop '{self.name}'.",
+            "version": 1,
+            "schemaVersion": 2,
+            "ownerEmail": self.owner_email,
+            "timeoutPolicy": "TIME_OUT_WF",
+            "timeoutSeconds": self.role_timeout_seconds,
+            "inputParameters": list(inputs),
+            "tasks": [
+                {
+                    "name": "generate",
+                    "taskReferenceName": "generate",
+                    "type": "LLM_CHAT_COMPLETE",
+                    "inputParameters": {
+                        "llmProvider": "${workflow.input.llm_provider}",
+                        "model": "${workflow.input.llm_model}",
+                        "temperature": a["temperature"],
+                        "maxTokens": a["max_tokens"],
+                        "messages": [
+                            {"role": "system", "message": a["system_prompt"]},
+                            {"role": "user", "message": user_message},
+                        ],
+                    },
+                },
+                {
+                    "name": "make_summary",
+                    "taskReferenceName": "make_summary",
+                    "type": "JSON_JQ_TRANSFORM",
+                    "inputParameters": {
+                        "result": "${generate.output.result}",
+                        "queryExpression": '(.result // "") | tostring | .[0:200]',
+                    },
+                },
+            ],
+            "outputParameters": {
+                "result": "${generate.output.result}",
+                "summary": "${make_summary.output.result}",
+                "tokens": "${generate.output.tokenUsed}",
+            },
+        }
+
     def engine_input(self, extension_params=None, context=None, **overrides):
         """The loop_engine input this Loop resolves to (also unit-testable)."""
         inp = {
@@ -245,6 +325,8 @@ class Loop:
         }
         for role in self._roles:
             inp[ROLE_ENGINE_INPUT[role]] = self.workflow_name(role)
+        if self._llm_actor is not None:
+            inp[ROLE_ENGINE_INPUT["actor"]] = self.workflow_name("actor")
         inp.update(self.knobs)
         inp.update(overrides)
         return {k: v for k, v in inp.items() if v is not None}
@@ -265,7 +347,20 @@ class Loop:
         if self._handler is None:
             from conductor.client.automator.task_handler import TaskHandler
             from conductor.client.configuration.configuration import Configuration
-            self._handler = TaskHandler(configuration=Configuration(),
+            cfg = Configuration()
+            # conductor-python only reads CONDUCTOR_AUTH_KEY/SECRET from env; a raw
+            # bearer token (token-authenticated servers) must be injected explicitly.
+            # The placeholder AuthenticationSettings is required too: the client only
+            # attaches the X-Authorization header when settings are present, and a
+            # set AUTH_TOKEN short-circuits any key/secret exchange until its TTL.
+            token = os.environ.get("CONDUCTOR_AUTH_TOKEN") or self.client.token
+            if token:
+                from conductor.client.configuration.settings.authentication_settings \
+                    import AuthenticationSettings
+                cfg.authentication_settings = AuthenticationSettings(
+                    key_id="_token", key_secret="_token")
+                cfg.update_token(token)
+            self._handler = TaskHandler(configuration=cfg,
                                         scan_for_annotated_workers=True)
             self._handler.start_processes()
         if join:
@@ -285,6 +380,8 @@ class Loop:
                 "From the conductor-loop repo run: ./quickstart.sh")
         for role in self._roles:
             self.client.register_workflow_def(self.wrapper_workflow(role))
+        if self._llm_actor is not None:
+            self.client.register_workflow_def(self.llm_actor_workflow())
 
     def execute(self, extension_params=None, context=None, wait=False,
                 start_workers=True, **overrides):

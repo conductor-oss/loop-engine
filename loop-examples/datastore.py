@@ -2,9 +2,11 @@
 
 Workers run as separate processes, so the refund example needs a shared, durable
 store with proper locking — exactly the kind of "real backend" a support agent must
-read from and write to. State lives in ``.state/store.json`` next to this package and
+read from and write to. State lives in ``.state/store.json`` next to this file and
 is human-inspectable, so you can SEE that a refund was actually recorded (evidence),
 not merely claimed by the model.
+
+Reset between demo runs:  python3 datastore.py reset
 """
 from __future__ import annotations
 
@@ -12,9 +14,10 @@ import contextlib
 import fcntl
 import json
 import os
+import sys
 from typing import Any, Callable
 
-_STATE_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), ".state")
+_STATE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".state")
 _STORE_PATH = os.path.join(_STATE_DIR, "store.json")
 _LOCK_PATH = os.path.join(_STATE_DIR, "store.lock")
 
@@ -92,3 +95,11 @@ def reset() -> None:
         with open(tmp, "w") as fh:
             json.dump(_SEED, fh, indent=2)
         os.replace(tmp, _STORE_PATH)
+
+
+if __name__ == "__main__":
+    if len(sys.argv) > 1 and sys.argv[1] == "reset":
+        reset()
+        print(f"store reset to seed state: {_STORE_PATH}")
+    else:
+        print(json.dumps(read(), indent=2))

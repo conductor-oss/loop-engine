@@ -1,14 +1,14 @@
-"""Tests for the refund workers and the file-backed datastore.
+"""Tests for the refund loop's roles and the file-backed datastore.
 
 Each test runs against an isolated temp store so tests never touch
-examples/workers/.state/ and can run in parallel with live workers.
+loop-examples/.state/ and can run in parallel with live workers.
 """
 import os
 import tempfile
 import unittest
 
-from conductor_loop_workers import datastore, refund
-from conductor_loop_workers.refund import account_lookup, issue_refund, verify_refund
+import datastore
+from refund_support import account_lookup, issue_refund, verify_refund
 
 
 class StoreIsolatedTest(unittest.TestCase):

@@ -1,30 +1,38 @@
-"""Refund / customer-support agent workers (the "tools" + the "verifier").
+#!/usr/bin/env python3
+"""refund_support.py — a support loop that closes on the refund LEDGER, not claims.
 
-These back a loop where the ACTOR (an LLM) decides what to do and the EVALUATOR
-verifies the *actual backend state* — the core loop-engineering principle: a support
-agent must not mark a refund complete merely because it generated a message saying so.
-``verify_refund`` reads the ledger.
+Every role is in this file:
+  @refund.pre_planner  looks up the account/order/policy facts (the new code-shapes-
+                       the-planner extension point) so the LLM planner strategizes
+                       from real data
+  @refund.actor        applies the refund policy and writes through ``issue_refund``
+                       to a durable, idempotent, audited ledger (datastore.py)
+  @refund.evaluator    ``verify_refund`` re-reads the ledger + policy independently —
+                       a refund the actor merely *claimed* can never pass
 
-Tasks:
-  account_lookup(customer_id, order_id) -> account + order facts (read-only)
-  issue_refund(order_id, amount, reason) -> validates policy then upserts; idempotent on
-                                            identical (order_id, amount); corrections audited
-  verify_refund(order_id, action, amount) -> deterministic verdict from ledger + policy
+The ledger lives in .state/store.json next to this file — open it to SEE the refund.
+Seed data ships both policy cases: ORD-5001 (12 days old — refund is correct) and
+ORD-5002 (45 days old — escalation is correct).
+
+Run (server + loop_engine registered, see repo quickstart):
+    pip install -e ../sdk
+    python refund_support.py in-window        # ORD-5001: refund, capped at the total
+    python refund_support.py out-of-window    # ORD-5002: escalate, ledger untouched
+    python3 datastore.py reset                # reset the ledger between runs
 """
-import logging
+import json
+import sys
 
-from conductor.client.worker.worker_task import worker_task
+from loop import Loop
 
-from . import datastore
-
-log = logging.getLogger("conductor_loop.refund")
+import datastore
 
 # Policy (deterministic): a refund must be within the window and not exceed the order total.
 REFUND_WINDOW_DAYS = 30
 
 
-@worker_task(task_definition_name="account_lookup", thread_count=2)
-def account_lookup(customer_id: str = "", order_id: str = "") -> dict:
+def account_lookup(customer_id="", order_id=""):
+    """Read-only lookup of customer account + order facts and refund policy."""
     store = datastore.read()
     account = store["accounts"].get(customer_id)
     order = store["orders"].get(order_id)
@@ -41,8 +49,7 @@ def account_lookup(customer_id: str = "", order_id: str = "") -> dict:
     }
 
 
-@worker_task(task_definition_name="issue_refund", thread_count=2)
-def issue_refund(order_id: str = "", amount: float = 0.0, reason: str = "") -> dict:
+def issue_refund(order_id="", amount=0.0, reason=""):
     """Validate against policy, then upsert the refund for an order.
 
     Write-time validation (defense in depth — the evaluator still verifies independently):
@@ -91,15 +98,10 @@ def issue_refund(order_id: str = "", amount: float = 0.0, reason: str = "") -> d
         store["refund_ledger"].append(entry)
         return {**entry, "idempotent_replay": False}
 
-    result = datastore.transact(_txn)
-    # DEBUG, not INFO: amounts/order ids are financial detail and shouldn't sit in INFO logs.
-    log.debug("issue_refund order=%s amount=%.2f -> %s",
-              order_id, amount, result.get("refund_id") or result.get("status"))
-    return result
+    return datastore.transact(_txn)
 
 
-@worker_task(task_definition_name="verify_refund", thread_count=2)
-def verify_refund(order_id: str = "", action: str = "", amount: float = 0.0) -> dict:
+def verify_refund(order_id="", action="", amount=0.0):
     """Independent verification from the system of record + policy. EVIDENCE, not claims.
 
     Checks the claimed action/amount against policy BEFORE consulting the ledger, so the
@@ -156,3 +158,87 @@ def verify_refund(order_id: str = "", action: str = "", amount: float = 0.0) -> 
 
     return {"passed": False, "score": 0.0, "recommend": "",
             "feedback": f"Unrecognized action '{action}'. Choose 'issue_refund' or 'escalate'."}
+
+
+# --- the loop -------------------------------------------------------------------
+refund = Loop(
+    name="refund_support",
+    objective="Resolve the customer refund request for the order in "
+              "extension_params, taking the policy-correct action.",
+    acceptance_criteria=f"Refund policy: refunds are allowed only within "
+                        f"{REFUND_WINDOW_DAYS} days of purchase; the refund amount must "
+                        f"NOT exceed the order total; if the order is outside the "
+                        f"window, escalate to a human instead of refunding.",
+    llm_provider="anthropic",
+    llm_model="claude-opus-4-7",
+    max_iterations=5,
+    max_replans=0,
+    token_budget=400000,
+)
+
+
+@refund.pre_planner
+def case_facts(extension_params=None):
+    """Ground the LLM planner in the account/order/policy facts before it strategizes."""
+    p = extension_params or {}
+    facts = account_lookup(p.get("customer_id", ""), p.get("order_id", ""))
+    return {"context": "ACCOUNT, ORDER & POLICY FACTS (from the backend): "
+                       + json.dumps(facts),
+            "plan_hints": "Refund only within the window and never above the order "
+                          "total; otherwise escalate. The evaluator verifies the "
+                          "ledger, so the decision must actually be recorded."}
+
+
+@refund.actor
+def resolve(feedback="", extension_params=None):
+    """Apply the policy; a refund goes through the validated, idempotent ledger write."""
+    p = extension_params or {}
+    order_id = p.get("order_id", "")
+    facts = account_lookup(p.get("customer_id", ""), order_id)
+    if not facts.get("found"):
+        action = {"action": "escalate", "amount": 0,
+                  "reason": facts.get("error", "case not found")}
+    elif facts["policy"]["within_window"]:
+        cap = facts["policy"]["max_refundable"]
+        requested = float(p.get("requested_amount") or cap)
+        amount = round(min(requested, cap), 2)  # never over-refund, whatever was asked
+        written = issue_refund(order_id=order_id, amount=amount,
+                               reason="customer refund request")
+        action = {"action": "issue_refund", "amount": amount, "ledger": written}
+    else:
+        action = {"action": "escalate", "amount": 0,
+                  "reason": f"order is {facts['order']['days_since_purchase']} days old, "
+                            f"outside the {REFUND_WINDOW_DAYS}-day window"}
+    return {"result": action,
+            "summary": f"{action['action']} ${action.get('amount', 0)} for {order_id}"}
+
+
+@refund.evaluator
+def verify(result=None, extension_params=None):
+    """Re-read the ledger and policy independently — the actor's claim is not evidence."""
+    r = result or {}
+    out = verify_refund(order_id=(extension_params or {}).get("order_id", ""),
+                        action=r.get("action", ""), amount=r.get("amount", 0))
+    return {"passed": out["passed"], "score": out["score"], "feedback": out["feedback"]}
+
+
+CASES = {
+    # Customer asks $200 on a $120 order — over-refund protection is exercised.
+    "in-window": {"customer_id": "CUST-1001", "order_id": "ORD-5001",
+                  "requested_amount": 200.00},
+    # 45 days old — escalation, not a refund, is the policy-correct action.
+    "out-of-window": {"customer_id": "CUST-1001", "order_id": "ORD-5002",
+                      "requested_amount": 80.00},
+}
+
+
+if __name__ == "__main__":
+    case = CASES.get(sys.argv[1] if len(sys.argv) > 1 else "in-window")
+    if case is None:
+        raise SystemExit(f"usage: python refund_support.py [{'|'.join(CASES)}]")
+    run = refund.execute(extension_params=case)
+    print(f"loop started: {run.id}")
+    out = run.watch()
+    print(json.dumps(out.get("result"), indent=2))
+    print(f"ledger: {json.dumps(datastore.read()['refund_ledger'], indent=2)}")
+    refund.stop_workers()
